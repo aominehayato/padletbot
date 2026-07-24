@@ -1,26 +1,32 @@
 const puppeteer = require("puppeteer");
-const axios = require("axios");
 
 (async () => {
   let browser = null;
   try {
     const account = process.argv[2] || "bot";
-    const apiKey = process.env.PADLET_API_KEY || "YOUR_API_KEY_HERE"; // 必要に応じて環境変数等から取得してください
+    const apiKey = process.env.PADLET_API_KEY || "YOUR_API_KEY_HERE";
     const boardId = "wy32bauth9n4npi1";
     const boardUrl = `https://padlet.com/magnificentconferenceliteracy/padlet-${boardId}`;
 
     console.log(`使用プロファイル: ${account}`);
 
-    // Step 1: 公式APIを使用して左端のセクションIDを取得
+    // Step 1: Node.js標準の fetch を使用して公式APIから左端のセクションIDを取得
     console.log("公式APIを使用してボード情報（セクション）を取得しています...");
-    const boardRes = await axios.get(`https://api.padlet.dev/v1/boards/${boardId}?include=posts,sections`, {
+    const boardRes = await fetch(`https://api.padlet.dev/v1/boards/${boardId}?include=posts,sections`, {
+      method: "GET",
       headers: {
         "X-API-KEY": apiKey,
         "accept": "application/vnd.api+json"
       }
     });
 
-    const sections = boardRes.data.included.filter(x => x.type === "section");
+    if (!boardRes.ok) {
+      const errText = await boardRes.text();
+      throw new Error(`ボード情報の取得に失敗しました: ${boardRes.status} ${errText}`);
+    }
+
+    const boardData = await boardRes.json();
+    const sections = boardData.included ? boardData.included.filter(x => x.type === "section") : [];
     if (!sections || sections.length === 0) {
       throw new Error("セクションが見つかりませんでした。");
     }
@@ -29,33 +35,41 @@ const axios = require("axios");
 
     // Step 2: 公式APIを使用して指定セクションに投稿を作成
     console.log("公式APIを使用して新しい投稿を作成しています...");
-    const createRes = await axios.post(`https://api.padlet.dev/v1/boards/${boardId}/posts`, {
-      data: {
-        type: "post",
-        attributes: {
-          content: {
-            subject: "自動テスト投稿",
-            body: "API経由で作成された投稿です。"
-          },
-          color: "red"
-        },
-        relationships: {
-          section: {
-            data: {
-              id: targetSectionId
-            }
-          }
-        }
-      }
-    }, {
+    const createRes = await fetch(`https://api.padlet.dev/v1/boards/${boardId}/posts`, {
+      method: "POST",
       headers: {
         "X-API-KEY": apiKey,
         "content-type": "application/vnd.api+json",
         "accept": "application/vnd.api+json"
-      }
+      },
+      body: JSON.stringify({
+        data: {
+          type: "post",
+          attributes: {
+            content: {
+              subject: "自動テスト投稿",
+              body: "API経由で作成された投稿です。"
+            },
+            color: "red"
+          },
+          relationships: {
+            section: {
+              data: {
+                id: targetSectionId
+              }
+            }
+          }
+        }
+      })
     });
 
-    const createdPostId = createRes.data.data.id;
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new Error(`投稿の作成に失敗しました: ${createRes.status} ${errText}`);
+    }
+
+    const createData = await createRes.json();
+    const createdPostId = createData.data.id;
     console.log(`投稿の作成に成功しました。作成された投稿ID: ${createdPostId}`);
 
     // Step 3: Puppeteerを起動してブラウザ経由でボードを開き、削除時の通信をCDPでキャプチャする
