@@ -80,59 +80,77 @@ const puppeteer = require("puppeteer");
     console.log("Padletのログインページへアクセスしています...");
     await page.goto("https://padlet.com/login", { waitUntil: "networkidle2", timeout: 60000 });
 
-    // ログイン画面のDOMテキストを確認（デバッグ用）
-    const loginPageText = await page.evaluate(() => document.body.innerText.slice(0, 300));
-    console.log("ログイン画面読み込み確認（抜粋）:", loginPageText.replace(/\s+/g, " "));
+    const currentUrl = page.url();
+    console.log("現在のURL:", currentUrl);
 
-    if (email && password) {
-      console.log("環境変数からメールアドレスとパスワードを使用してログイン処理を実行します...");
-      
-      // メールアドレス入力欄の待機と入力
-      await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 15000 });
-      await page.type('input[type="email"], input[name="email"]', email, { delay: 100 });
-
-      // パスワード入力欄の待機と入力
-      await page.waitForSelector('input[type="password"], input[name="password"]', { timeout: 15000 });
-      await page.type('input[type="password"], input[name="password"]', password, { delay: 100 });
-
-      // ログインボタンのクリック
-      const submitButtonSelectors = [
-        'button[type="submit"]',
-        'input[type="submit"]',
-        'form button'
-      ];
-      
-      let clicked = false;
-      for (const selector of submitButtonSelectors) {
-        try {
-          const btn = await page.$(selector);
-          if (btn) {
-            await btn.click();
-            clicked = true;
-            console.log(`送信ボタン (${selector}) をクリックしました。`);
-            break;
-          }
-        } catch (e) {
-          // セレクタが見つからない場合は次へ
-        }
-      }
-
-      if (!clicked) {
-        console.log("送信ボタンがセレクタで見つからなかったため、キーボードのEnterで送信します。");
-        await page.keyboard.press("Enter");
-      }
-
-      // ログイン完了（ダッシュボード等への遷移）を待機
-      console.log("ログイン完了およびダッシュボードへの遷移を待機しています（最大60秒）...");
-      try {
-        await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
-      } catch (navErr) {
-        console.log("navigationの待機がタイムアウトしましたが、SPA遷移の可能性を考慮して続行します。");
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 10000));
+    // 既にログイン済み（ログインページ以外にリダイレクトされた場合）はログイン処理をスキップ
+    if (!currentUrl.includes("/login")) {
+      console.log("既にログイン済みのセッションが存在するため、ログイン処理をスキップします。");
     } else {
-      console.log("PADLET_EMAIL または PADLET_PASSWORD が設定されていないため、ログイン処理をスキップします。");
+      // ログイン画面のDOMテキストを確認（デバッグ用）
+      const loginPageText = await page.evaluate(() => document.body.innerText.slice(0, 300));
+      console.log("ログイン画面読み込み確認（抜粋）:", loginPageText.replace(/\s+/g, " "));
+
+      // 入力フォームの存在を検証
+      const inputInfo = await page.evaluate(() => {
+        return [...document.querySelectorAll("input")].map(x => ({
+          type: x.type,
+          name: x.name,
+          placeholder: x.placeholder
+        }));
+      });
+      console.log("検出されたinput要素一覧:", JSON.stringify(inputInfo));
+
+      if (email && password && inputInfo.length > 0) {
+        console.log("環境変数からメールアドレスとパスワードを使用してログイン処理を実行します...");
+        
+        // メールアドレス入力欄の待機と入力
+        await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 15000 });
+        await page.type('input[type="email"], input[name="email"]', email, { delay: 100 });
+
+        // パスワード入力欄の待機と入力
+        await page.waitForSelector('input[type="password"], input[name="password"]', { timeout: 15000 });
+        await page.type('input[type="password"], input[name="password"]', password, { delay: 100 });
+
+        // ログインボタンのクリック
+        const submitButtonSelectors = [
+          'button[type="submit"]',
+          'input[type="submit"]',
+          'form button'
+        ];
+        
+        let clicked = false;
+        for (const selector of submitButtonSelectors) {
+          try {
+            const btn = await page.$(selector);
+            if (btn) {
+              await btn.click();
+              clicked = true;
+              console.log(`送信ボタン (${selector}) をクリックしました。`);
+              break;
+            }
+          } catch (e) {
+            // セレクタが見つからない場合は次へ
+          }
+        }
+
+        if (!clicked) {
+          console.log("送信ボタンがセレクタで見つからなかったため、キーボードのEnterで送信します。");
+          await page.keyboard.press("Enter");
+        }
+
+        // ログイン完了（ダッシュボード等への遷移）を待機
+        console.log("ログイン完了およびダッシュボードへの遷移を待機しています（最大60秒）...");
+        try {
+          await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
+        } catch (navErr) {
+          console.log("navigationの待機がタイムアウトしましたが、SPA遷移の可能性を考慮して続行します。");
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      } else {
+        console.log("ログインフォームが見つからないか、環境変数が設定されていないためログイン処理をスキップします。");
+      }
     }
 
     // トラッキングCookie（ww_ati等）の生成を確認
