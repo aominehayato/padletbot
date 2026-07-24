@@ -27,11 +27,14 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
-    // 全てのAPI通信を監視して動的キャプチャする設定
+    // 全てのAPI通信およびナビゲーションリクエストの追跡・監視設定
     page.on("request", (req) => {
       const url = req.url();
       if (url.includes("/api/")) {
         console.log("API REQUEST:", req.method(), url);
+      }
+      if (req.isNavigationRequest()) {
+        console.log("NAV REQUEST:", req.url());
       }
     });
 
@@ -150,17 +153,32 @@ const puppeteer = require("puppeteer");
           const targetUrl = responseData.data.attributes.loginUrl || responseData.data.attributes.redirectUrl;
           if (targetUrl) {
             console.log("レスポンスから取得した検証URLへアクセス中:", targetUrl);
+            
+            // domcontentloadedで素早くアクセスし、その後の動的遷移や自動リダイレクトを待機
             await page.goto(targetUrl, {
-              waitUntil: "networkidle2",
-              timeout: 30000
+              waitUntil: "domcontentloaded",
+              timeout: 60000
             });
 
-            // verify-login-email-address からの自動遷移やJS側の処理完了を確実に待機
+            console.log("ページタイトル:", await page.title());
+            console.log("現在のURL:", page.url());
+
+            // ページのHTMLコンテンツやローカルストレージの状態をデバッグ出力
+            const debugInfo = await page.evaluate(() => ({
+              htmlSnippet: document.body.innerHTML.substring(0, 500),
+              localStorageKeys: Object.keys(localStorage),
+              sessionStorageKeys: Object.keys(sessionStorage)
+            }));
+            console.log("ページデバッグ情報:", JSON.stringify(debugInfo, null, 2));
+
+            // 認証フローの完了（verify-login-email-addressからの離脱）を最大60秒待機
             await page.waitForFunction(() => {
               return !location.pathname.includes("verify-login-email-address");
             }, {
               timeout: 60000
-            }).catch(() => {});
+            }).catch(() => {
+              console.log("タイムアウトまたは verify-login-email-address からの自動遷移が確認できませんでした。");
+            });
 
             console.log("認証後URL:", page.url());
 
