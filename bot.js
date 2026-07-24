@@ -55,8 +55,8 @@ const puppeteer = require("puppeteer");
     // Padlet自体のAPIリクエストおよびレスポンスを完全に監視・捕捉する設定
     page.on("request", (req) => {
       const url = req.url();
-      if (url.includes("/api/10/wishes")) {
-        console.log("===== PADLET自身による WISHES API リクエスト検出 =====");
+      if (url.includes("/api/10/")) {
+        console.log("===== API リクエスト検出 =====");
         console.log("リクエストURL:", url);
         console.log("リクエストヘッダー:", req.headers());
       }
@@ -76,26 +76,9 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    // トラッキングCookie（ww_ati等）の生成を確認
-    try {
-      await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
-      await page.waitForFunction(() => document.cookie.includes("ww_ati"), { timeout: 15000 });
-      console.log("ww_ati の生成を確認しました。");
-    } catch (e) {
-      console.log("ww_ati の生成待ちがタイムアウトしました。続行します。");
-    }
-
-    // Service Worker コントローラーを有効化するため、一度ページをリロード
-    console.log("Service Worker を有効化するためページを再読み込みします...");
-    await page.reload({ waitUntil: "networkidle0" });
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    const hasSwController = await page.evaluate(() => !!navigator.serviceWorker.controller);
-    console.log("Service Worker コントローラー有効状態:", hasSwController);
-
-    // 実際のボードページへ遷移してコンテキストを完全に構築
+    // 実際のボードページへ直接遷移してセッションコンテキストを構築
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
-    console.log("ボードページへ移動してSPAおよびセッションコンテキストを構築中:", boardUrl);
+    console.log("ボードページへ直接移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "networkidle2" });
 
     // ログイン状態の確認処理
@@ -105,10 +88,10 @@ const puppeteer = require("puppeteer");
     console.log("ログイン状態:", loggedIn);
 
     // ページの初期化とAPI自動発行を十分に待機
-    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（10秒）...");
+    await new Promise(resolve => setTimeout(resolve, 10000));
 
-    // Padlet API 初回 wishes取得の実行
+    // Padlet API 初回 wishes取得の実行（不要なsec-*ヘッダーを排除し、自然なfetchを実行）
     console.log("WISHES API 初回取得を実行します...");
     const apiResult = await page.evaluate(async () => {
       const url = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=" + Date.now();
@@ -118,17 +101,7 @@ const puppeteer = require("puppeteer");
           credentials: "include",
           headers: {
             "accept": "application/json, application/vnd.api+json",
-            "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
-            "cache-control": "no-cache",
-            "pragma": "no-cache",
-            "prefer": "safe",
-            "priority": "u=1, i",
-            "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Microsoft Edge\";v=\"150\"",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"Windows\"",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-origin"
+            "prefer": "safe"
           }
         });
         const text = await response.text();
@@ -157,8 +130,8 @@ const puppeteer = require("puppeteer");
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight);
     });
-    console.log("追加のAPIレスポンスを待機しています（20秒）...");
-    await new Promise(resolve => setTimeout(resolve, 20000));
+    console.log("追加のAPIレスポンスを待機しています（15秒）...");
+    await new Promise(resolve => setTimeout(resolve, 15000));
 
     const finalCookies = await page.cookies();
     console.log("最終的な全Cookie名一覧:", finalCookies.map(c => c.name));
