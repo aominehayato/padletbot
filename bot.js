@@ -9,14 +9,22 @@ const puppeteer = require("puppeteer");
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled"
       ]
     });
 
     const page = await browser.newPage();
 
+    // navigator.webdriver の秘匿化
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "webdriver", {
+        get: () => undefined
+      });
+    });
+
     await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
     // 通信の監視設定
@@ -72,6 +80,12 @@ const puppeteer = require("puppeteer");
     if (email && password && !cookiesJson && !sessionCookie) {
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
+
+      // 検証用デバッグ情報の出力
+      console.log("webdriver:", await page.evaluate(() => navigator.webdriver));
+      console.log("userAgent:", await page.evaluate(() => navigator.userAgent));
+      const initialCookies = await page.cookies();
+      console.log("初期Cookie一覧:", initialCookies.map((c) => c.name));
 
       console.log("CSRFトークンを取得中...");
       const csrfToken = await page.evaluate(() => {
