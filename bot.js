@@ -54,15 +54,37 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // すべての Fetch / XHR リクエストを包括的に監視・ログ出力する設定
+    // 認証情報（Authorization, x-csrf-token, x-uid）を保持するための変数
+    let capturedHeaders = {
+      authorization: null,
+      "x-csrf-token": null,
+      "x-uid": null
+    };
+
+    // すべての Fetch / XHR リクエストを包括的に監視し、必要な認証ヘッダーをキャプチャする設定
     page.on("request", (req) => {
       const type = req.resourceType();
       const url = req.url();
+      const headers = req.headers();
+
+      if (headers.authorization && !capturedHeaders.authorization) {
+        capturedHeaders.authorization = headers.authorization;
+        console.log("\n[API AUTH CAPTURED] Authorization:", headers.authorization);
+      }
+
+      if (headers["x-csrf-token"] && !capturedHeaders["x-csrf-token"]) {
+        capturedHeaders["x-csrf-token"] = headers["x-csrf-token"];
+        console.log("\n[API AUTH CAPTURED] x-csrf-token:", headers["x-csrf-token"]);
+      }
+
+      if (headers["x-uid"] && !capturedHeaders["x-uid"]) {
+        capturedHeaders["x-uid"] = headers["x-uid"];
+        console.log("\n[API AUTH CAPTURED] x-uid:", headers["x-uid"]);
+      }
 
       if (type === "xhr" || type === "fetch") {
         console.log("\n===== FETCH / XHR REQUEST =====");
         console.log("URL:", url);
-        console.log("Headers:", JSON.stringify(req.headers(), null, 2));
 
         const postData = req.postData();
         if (postData) {
@@ -74,12 +96,11 @@ const puppeteer = require("puppeteer");
     // すべての Fetch / XHR レスポンスを包括的に監視・ログ出力する設定
     page.on("response", async (res) => {
       const req = res.request();
-      const type = req.resourceType();
+      const type = res.resourceType();
 
       if (type === "xhr" || type === "fetch") {
         console.log("\n===== FETCH / XHR RESPONSE =====");
         console.log("Status:", res.status(), "URL:", res.url());
-        console.log("Response headers:", JSON.stringify(res.headers(), null, 2));
 
         try {
           const text = await res.text();
@@ -165,14 +186,13 @@ const puppeteer = require("puppeteer");
     });
     console.log("HTML内容の初期状態チェック:", htmlInfo);
 
-    // ページの初期化とAPI自動発行を十分に待機（30秒）
-    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（30秒）...");
-    for (let i = 0; i < 30; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+    // ページの初期化とAPI自動発行を促すためのインタラクション実行
+    console.log("Padlet内部の初期化処理とAPI自動発行を促すため、マウス移動とスクロールを実行します...");
+    await page.mouse.move(500, 500);
+    await page.mouse.click(500, 500);
+    await page.keyboard.press("PageDown");
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // ページ内スクロールやインタラクションを実行してAPIリクエストを強制発火
-    console.log("ページ内スクロールを実行してAPIリクエストの発生を促します...");
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight / 2);
     });
@@ -183,6 +203,51 @@ const puppeteer = require("puppeteer");
     });
     console.log("追加のAPIレスポンスを待機しています（15秒）...");
     await new Promise(resolve => setTimeout(resolve, 15000));
+
+    // キャプチャされた認証情報の確認
+    console.log("キャプチャされた認証ヘッダー情報:", capturedHeaders);
+
+    // キャプチャされた認証情報を用いて、ブラウザコンテキストから DELETE API を実行
+    if (capturedHeaders.authorization && capturedHeaders["x-csrf-token"]) {
+      console.log("必要な認証情報が揃ったため、DELETE APIを実行します...");
+      const deleteResult = await page.evaluate(async (auth, csrf, uid) => {
+        try {
+          const res = await fetch("https://padlet.com/api/9/wishes/post_4b3zaM2NjG76Q2j7?soft_delete=true", {
+            method: "DELETE",
+            credentials: "include",
+            headers: {
+              "accept": "application/json, application/vnd.api+json",
+              "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
+              "authorization": auth,
+              "cache-control": "no-cache",
+              "content-type": "application/json; charset=utf-8",
+              "pragma": "no-cache",
+              "prefer": "safe",
+              "priority": "u=1, i",
+              "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Microsoft Edge\";v=\"150\"",
+              "sec-ch-ua-mobile": "?0",
+              "sec-ch-ua-platform": "\"Windows\"",
+              "sec-fetch-dest": "empty",
+              "sec-fetch-mode": "same-origin",
+              "sec-fetch-site": "same-origin",
+              "x-csrf-token": csrf,
+              "x-uid": uid || ""
+            }
+          });
+          return {
+            status: res.status,
+            ok: res.ok,
+            text: await res.text()
+          };
+        } catch (err) {
+          return { error: err.message };
+        }
+      }, capturedHeaders.authorization, capturedHeaders["x-csrf-token"], capturedHeaders["x-uid"]);
+
+      console.log("DELETE API 実行結果:", deleteResult);
+    } else {
+      console.log("警告: 必要な認証ヘッダー（Authorization または x-csrf-token）がキャプチャされませんでした。");
+    }
 
     const finalCookies = await page.cookies();
     console.log("最終的な全Cookie名一覧:", finalCookies.map(c => c.name));
