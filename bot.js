@@ -5,7 +5,7 @@ const puppeteer = require("puppeteer");
   try {
     console.log("ブラウザを起動しています...");
     browser = await puppeteer.launch({
-      headless: "new",
+      headless: true,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -30,13 +30,11 @@ const puppeteer = require("puppeteer");
       await page.waitForSelector("input[type='email']", { timeout: 15000 });
       await page.type("input[type='email']", email);
 
-      // パスワード入力欄が存在するか確認して入力
       const passwordInput = await page.$("input[type='password']");
       if (passwordInput) {
         console.log("パスワードを入力中...");
         await page.type("input[type='password']", password);
       } else {
-        // 2段階画面（メール入力後に次へを押すタイプ）の場合の対応
         console.log("「次へ」操作を実行中...");
         await page.keyboard.press("Enter");
         await page.waitForSelector("input[type='password']", { timeout: 15000 });
@@ -44,11 +42,15 @@ const puppeteer = require("puppeteer");
       }
 
       console.log("ログインフォームを送信中...");
-      await Promise.all([
-        page.keyboard.press("Enter"),
-        page.waitForNavigation({ waitUntil: "networkidle2" })
-      ]);
-      console.log("ログイン処理が完了しました。");
+      await page.keyboard.press("Enter");
+
+      console.log("通信完了まで5秒間待機します...");
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      console.log("現在のURL:", page.url());
+
+      const cookies = await page.cookies();
+      console.log("取得されたCookie一覧:", cookies.map((c) => c.name));
     } else {
       console.log("ログイン環境変数が設定されていないため、未認証の状態で処理を継続します。");
     }
