@@ -21,8 +21,22 @@ const puppeteer = require("puppeteer");
 
     const email = process.env.PADLET_EMAIL;
     const password = process.env.PADLET_PASSWORD;
+    const sessionCookie = process.env.PADLET_SESSION_COOKIE;
 
-    if (email && password) {
+    // 事前にログイン済みCookieが環境変数に設定されている場合の読み込み処理
+    if (sessionCookie) {
+      console.log("環境変数からセッションCookieを設定中...");
+      await page.setCookie({
+        name: "ww_s",
+        value: sessionCookie,
+        domain: ".padlet.com",
+        path: "/",
+        httpOnly: true,
+        secure: true
+      });
+    }
+
+    if (email && password && !sessionCookie) {
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
@@ -64,12 +78,26 @@ const puppeteer = require("puppeteer");
       console.log("ログインAPIレスポンスステータス:", loginResponse.status);
       console.log("ログインAPIレスポンス結果:", loginResponse.body);
 
+      // レスポンスに含まれる検証URLへの自動ナビゲーション処理
+      try {
+        const responseData = JSON.parse(loginResponse.body);
+        if (responseData && responseData.data && responseData.data.attributes) {
+          const targetUrl = responseData.data.attributes.loginUrl || responseData.data.attributes.redirectUrl;
+          if (targetUrl) {
+            console.log("レスポンスから取得した検証URLへアクセス中:", targetUrl);
+            await page.goto(targetUrl, { waitUntil: "networkidle2" });
+          }
+        }
+      } catch (e) {
+        console.log("レスポンスJSONの自動解析をスキップしました。");
+      }
+
       console.log("通信完了まで3秒間待機します...");
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const cookies = await page.cookies();
       console.log("ログイン後に取得されたCookie一覧:", cookies.map((c) => c.name));
-    } else {
+    } else if (!sessionCookie) {
       console.log("ログイン環境変数が設定されていないため、未認証の状態で処理を継続します。");
     }
 
