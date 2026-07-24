@@ -54,37 +54,24 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // 認証情報（Authorization, x-csrf-token, x-uid）を保持するための変数
-    let capturedHeaders = {
-      authorization: null,
-      "x-csrf-token": null,
-      "x-uid": null
+    // 認証情報を保持するための変数
+    let capturedAuth = {
+      authorization: null
     };
 
-    // すべての Fetch / XHR リクエストを包括的に監視し、必要な認証ヘッダーをキャプチャする設定
+    // Padlet公式APIリクエストのみを対象に監視・キャプチャを設定
     page.on("request", (req) => {
-      const type = req.resourceType();
       const url = req.url();
       const headers = req.headers();
 
-      if (headers.authorization && !capturedHeaders.authorization) {
-        capturedHeaders.authorization = headers.authorization;
-        console.log("\n[API AUTH CAPTURED] Authorization:", headers.authorization);
-      }
-
-      if (headers["x-csrf-token"] && !capturedHeaders["x-csrf-token"]) {
-        capturedHeaders["x-csrf-token"] = headers["x-csrf-token"];
-        console.log("\n[API AUTH CAPTURED] x-csrf-token:", headers["x-csrf-token"]);
-      }
-
-      if (headers["x-uid"] && !capturedHeaders["x-uid"]) {
-        capturedHeaders["x-uid"] = headers["x-uid"];
-        console.log("\n[API AUTH CAPTURED] x-uid:", headers["x-uid"]);
-      }
-
-      if (type === "xhr" || type === "fetch") {
-        console.log("\n===== FETCH / XHR REQUEST =====");
+      if (url.includes("padlet.com/api")) {
+        console.log("\n===== PADLET API REQUEST =====");
         console.log("URL:", url);
+
+        if (headers.authorization && !capturedAuth.authorization) {
+          capturedAuth.authorization = headers.authorization;
+          console.log("[API AUTH CAPTURED] Authorization:", headers.authorization);
+        }
 
         const postData = req.postData();
         if (postData) {
@@ -93,39 +80,22 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    // すべての Fetch / XHR レスポンスを包括的に監視・ログ出力する設定（修正済み）
+    // Padlet公式APIレスポンスのみを対象にJSONを解析して監視
     page.on("response", async (res) => {
-      const req = res.request();
-      const type = req.resourceType();
+      const url = res.url();
 
-      if (type === "xhr" || type === "fetch") {
-        console.log("\n===== FETCH / XHR RESPONSE =====");
-        console.log("Status:", res.status(), "URL:", res.url());
-
-        try {
-          const text = await res.text();
-          console.log("Response body snippet:", text.substring(0, 300));
-        } catch (e) {
-          console.log("Response body read failed:", e.message);
-        }
+      if (!url.includes("padlet.com/api")) {
+        return;
       }
-    });
 
-    // requestfinished イベントの追加
-    page.on("requestfinished", async (req) => {
-      const type = req.resourceType();
-      if (type === "xhr" || type === "fetch") {
-        const response = await req.response();
-        if (response) {
-          console.log("\n===== REQUEST FINISHED =====");
-          console.log("URL:", req.url(), "Status:", response.status());
-          try {
-            const body = await response.text();
-            console.log("Body snippet:", body.substring(0, 500));
-          } catch (e) {
-            console.log("Body read failed:", e.message);
-          }
-        }
+      console.log("\n===== PADLET API RESPONSE =====");
+      console.log("Status:", res.status(), "URL:", url);
+
+      try {
+        const json = await res.json();
+        console.log("Response JSON snippet:", JSON.stringify(json).slice(0, 1000));
+      } catch (e) {
+        console.log("Response body parse failed or not JSON");
       }
     });
 
@@ -141,10 +111,14 @@ const puppeteer = require("puppeteer");
       });
     });
 
-    // 実際のボードページへ直接遷移してセッションコンテキストを構築
+    // 実際のボードページへ直接遷移（SPAの初期化を確実にするため domcontentloaded を採用）
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle2" });
+    await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
+
+    // SPAの完全な初期化とAPI自動発行を待機
+    console.log("SPAの初期化とAPI呼び出しを待機しています（15秒）...");
+    await new Promise(resolve => setTimeout(resolve, 15000));
 
     // ログイン状態の確認処理
     const loggedIn = await page.evaluate(() => {
@@ -156,61 +130,18 @@ const puppeteer = require("puppeteer");
     const docCookie = await page.evaluate(() => document.cookie);
     console.log("document.cookie の内容:", docCookie);
 
-    // LocalStorage の内容を確認
-    const localStorages = await page.evaluate(() => {
-      const items = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        items.push({ key: key, value: localStorage.getItem(key)?.slice(0, 100) });
-      }
-      return items;
-    });
-    console.log("LocalStorage一覧:", localStorages);
-
-    // Performance API を使ったリソース確認
-    const resources = await page.evaluate(() => {
-      return performance.getEntriesByType("resource")
-        .map(x => x.name)
-        .filter(x => x.includes("/api") || x.includes("/v1") || x.includes("padlet"));
-    });
-    console.log("Performance API Resources:", resources);
-
-    // HTML内の Initial State / 投稿データの探索
-    const htmlInfo = await page.evaluate(() => {
-      const html = document.documentElement.innerHTML;
-      return {
-        hasInitial: html.includes("__INITIAL") || html.includes("__STATE__") || html.includes("initialState"),
-        hasWallId: html.includes("wallId") || html.includes("266991839"),
-        hasPosts: html.includes("posts") || html.includes("content")
-      };
-    });
-    console.log("HTML内容の初期状態チェック:", htmlInfo);
-
-    // ページの初期化とAPI自動発行を促すためのインタラクション実行
-    console.log("Padlet内部の初期化処理とAPI自動発行を促すため、マウス移動とスクロールを実行します...");
-    await page.mouse.move(500, 500);
-    await page.mouse.click(500, 500);
-    await page.keyboard.press("PageDown");
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight / 2);
-    });
-    await new Promise(resolve => setTimeout(resolve, 10000));
-
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
-    });
-    console.log("追加のAPIレスポンスを待機しています（15秒）...");
-    await new Promise(resolve => setTimeout(resolve, 15000));
-
     // キャプチャされた認証情報の確認
-    console.log("キャプチャされた認証ヘッダー情報:", capturedHeaders);
+    console.log("キャプチャされた認証情報:", capturedAuth);
+
+    // ブラウザの全Cookieを取得
+    const cookies = await page.cookies();
+    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+    console.log("構築済みCookie文字列:", cookieString);
 
     // キャプチャされた認証情報を用いて、ブラウザコンテキストから DELETE API を実行
-    if (capturedHeaders.authorization && capturedHeaders["x-csrf-token"]) {
-      console.log("必要な認証情報が揃ったため、DELETE APIを実行します...");
-      const deleteResult = await page.evaluate(async (auth, csrf, uid) => {
+    if (capturedAuth.authorization) {
+      console.log("Authorizationが取得できたため、DELETE APIを実行します...");
+      const deleteResult = await page.evaluate(async (auth) => {
         try {
           const res = await fetch("https://padlet.com/api/9/wishes/post_4b3zaM2NjG76Q2j7?soft_delete=true", {
             method: "DELETE",
@@ -229,9 +160,7 @@ const puppeteer = require("puppeteer");
               "sec-ch-ua-platform": "\"Windows\"",
               "sec-fetch-dest": "empty",
               "sec-fetch-mode": "same-origin",
-              "sec-fetch-site": "same-origin",
-              "x-csrf-token": csrf,
-              "x-uid": uid || ""
+              "sec-fetch-site": "same-origin"
             }
           });
           return {
@@ -242,11 +171,11 @@ const puppeteer = require("puppeteer");
         } catch (err) {
           return { error: err.message };
         }
-      }, capturedHeaders.authorization, capturedHeaders["x-csrf-token"], capturedHeaders["x-uid"]);
+      }, capturedAuth.authorization);
 
       console.log("DELETE API 実行結果:", deleteResult);
     } else {
-      console.log("警告: 必要な認証ヘッダー（Authorization または x-csrf-token）がキャプチャされませんでした。");
+      console.log("警告: Authorizationヘッダーがキャプチャされませんでした。");
     }
 
     const finalCookies = await page.cookies();
