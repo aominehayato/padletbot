@@ -2,10 +2,8 @@ name: Padlet Bot Execution
 
 on:
   schedule:
-    # 1時間ごとに自動実行する設定（Cron形式）
     - cron: '0 * * * *'
   workflow_dispatch:
-    # GitHubのWeb画面から手動で即時実行ボタンを押すことも可能です
 
 jobs:
   build:
@@ -18,10 +16,13 @@ jobs:
       - name: Node.jsのセットアップ
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: 依存関係のインストール
         run: npm install
 
       - name: Botスクリプトの実行
+        env:
+          PADLET_EMAIL: ${{ secrets.PADLET_EMAIL }}
+          PADLET_PASSWORD: ${{ secrets.PADLET_PASSWORD }}
         run: npm start
