@@ -27,7 +27,7 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
-    // 通信の監視設定
+    // 通信の監視設定（login_as_user や verify_login の動的キャプチャ）
     page.on("request", (req) => {
       if (req.url().includes("login_as_user") || req.url().includes("verify_login")) {
         console.log("REQUEST:", req.url());
@@ -35,8 +35,9 @@ const puppeteer = require("puppeteer");
     });
 
     page.on("response", async (response) => {
-      if (response.url().includes("login_as_user") || response.url().includes("verify_login")) {
-        console.log("RESPONSE:", response.status(), response.url());
+      const url = response.url();
+      if (url.includes("login_as_user") || url.includes("verify_login")) {
+        console.log("RESPONSE:", response.status(), url);
       }
     });
 
@@ -81,7 +82,6 @@ const puppeteer = require("puppeteer");
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
-      // 検証用デバッグ情報の出力
       console.log("webdriver:", await page.evaluate(() => navigator.webdriver));
       console.log("userAgent:", await page.evaluate(() => navigator.userAgent));
       const initialCookies = await page.cookies();
@@ -154,23 +154,13 @@ const puppeteer = require("puppeteer");
               timeout: 30000
             });
 
-            console.log("遷移後のURL:", page.url());
+            // リダイレクト完了まで追加で確実に待機
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            console.log("遷移後の最終URL:", page.url());
 
             // 状態確認用のスクリーンショットを保存
             await page.screenshot({ path: "login_result.png", fullPage: true });
             console.log("スクリーンショット 'login_result.png' を保存しました。");
-
-            // 認証完了まで待機
-            await page.waitForFunction(
-              () =>
-                location.pathname.includes("verify_login") ||
-                location.pathname.includes("home") ||
-                location.pathname.includes("dashboard") ||
-                location.pathname.includes("verify-login-email-address"),
-              { timeout: 15000 }
-            ).catch(() => {});
-
-            console.log("待機完了後の現在のURL:", page.url());
           }
         }
       } catch (e) {
@@ -188,11 +178,18 @@ const puppeteer = require("puppeteer");
       waitUntil: "networkidle2"
     });
 
+    // SPAでのセッション反映のためのリロード処理
+    await page.reload({ waitUntil: "networkidle2" });
+
     console.log("ボードページ上の最新CSRFトークンを再取得中...");
     const boardCsrfToken = await page.evaluate(() => {
       const meta = document.querySelector('meta[name="csrf-token"]');
       return meta ? meta.content : null;
     });
+
+    // デバッグ情報の出力
+    console.log("API直前のdocument.cookie:", await page.evaluate(() => document.cookie));
+    console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
@@ -202,21 +199,28 @@ const puppeteer = require("puppeteer");
         const response = await fetch(url, {
           method: "GET",
           headers: {
-            "accept": "*/*",
+            "accept": "application/json, text/plain, */*",
             "prefer": "safe",
-            "x-csrf-token": token || ""
+            "x-csrf-token": token || "",
+            "x-requested-with": "XMLHttpRequest"
           },
           credentials: "include"
         });
-        return await response.text();
+        return {
+          status: response.status,
+          url: response.url,
+          text: await response.text()
+        };
       },
       apiUrl,
       boardCsrfToken
     );
 
-    console.log("--- APIレスポンス結果 ---");
-    console.log(apiResult);
-    console.log("------------------------");
+    console.log("--- APIレスポンス結果詳細 ---");
+    console.log("ステータス:", apiResult.status);
+    console.log("リクエストURL:", apiResult.url);
+    console.log("レスポンス本文:", apiResult.text);
+    console.log("----------------------------");
 
     await browser.close();
     process.exit(0);
