@@ -173,54 +173,24 @@ const puppeteer = require("puppeteer");
       console.log("----------------------------------------");
     }
 
-    console.log("Padletの目的のボードページへアクセス中...");
-    await page.goto("https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1", {
-      waitUntil: "networkidle2"
-    });
-
-    // SPAでのセッション反映のためのリロード処理
-    await page.reload({ waitUntil: "networkidle2" });
-
-    console.log("ボードページ上の最新CSRFトークンを再取得中...");
-    const boardCsrfToken = await page.evaluate(() => {
-      const meta = document.querySelector('meta[name="csrf-token"]');
-      return meta ? meta.content : null;
-    });
-
-    // デバッグ情報の出力
-    console.log("API直前のdocument.cookie:", await page.evaluate(() => document.cookie));
+    // デバッグ情報の出力（全Cookie情報を網羅して出力）
+    const allCookies = await page.cookies();
+    console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
-    console.log("確立された認証セッションを用いて非公開APIへリクエストを送信中...");
-    const apiResult = await page.evaluate(
-      async (url, token) => {
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            "accept": "application/json, text/plain, */*",
-            "prefer": "safe",
-            "x-csrf-token": token || "",
-            "x-requested-with": "XMLHttpRequest"
-          },
-          credentials: "include"
-        });
-        return {
-          status: response.status,
-          url: response.url,
-          text: await response.text()
-        };
-      },
-      apiUrl,
-      boardCsrfToken
-    );
+    console.log("ブラウザの通常ナビゲーション（page.goto）を用いて非公開APIへ直接アクセス中...");
+    
+    // fetchを使用せず、Chrome成功通信と同じ通常ナビゲーション（GETリクエスト）を実行
+    await page.goto(apiUrl, {
+      waitUntil: "networkidle2"
+    });
 
-    console.log("--- APIレスポンス結果詳細 ---");
-    console.log("ステータス:", apiResult.status);
-    console.log("リクエストURL:", apiResult.url);
-    console.log("レスポンス本文:", apiResult.text);
-    console.log("----------------------------");
+    console.log("--- APIレスポンス結果詳細（ページコンテンツ） ---");
+    const responseContent = await page.content();
+    console.log(responseContent);
+    console.log("-------------------------------------------------");
 
     await browser.close();
     process.exit(0);
