@@ -53,6 +53,7 @@ const puppeteer = require("puppeteer");
     const password = process.env.PADLET_PASSWORD;
     const cookiesJson = process.env.PADLET_COOKIES_JSON;
     const sessionCookie = process.env.PADLET_SESSION_COOKIE;
+    const verificationUrl = process.env.PADLET_VERIFICATION_URL; // メール認証用URL (例: https://padlet.com/auth/verify_login?verification_token=...)
 
     // 事前認証用Cookieのインポート処理
     if (cookiesJson) {
@@ -86,7 +87,12 @@ const puppeteer = require("puppeteer");
       });
     }
 
-    if (email && password && !cookiesJson && !sessionCookie) {
+    // verificationUrl が指定されている場合は直接認証URLへアクセスしてセッションを確立する
+    if (verificationUrl) {
+      console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
+      await page.goto(verificationUrl, { waitUntil: "networkidle2", timeout: 60000 });
+      console.log("認証完了後のURL:", page.url());
+    } else if (email && password && !cookiesJson && !sessionCookie) {
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
@@ -153,53 +159,9 @@ const puppeteer = require("puppeteer");
       );
 
       console.log("ログインAPIレスポンスステータス:", loginResponse.status);
-      console.log("ログインAPIレスポンスヘッダー:", JSON.stringify(loginResponse.headers, null, 2));
       console.log("ログインAPIレスポンス結果:", loginResponse.body);
 
-      try {
-        const responseData = JSON.parse(loginResponse.body);
-        if (responseData && responseData.data && responseData.data.attributes) {
-          const targetUrl = responseData.data.attributes.loginUrl || responseData.data.attributes.redirectUrl;
-          if (targetUrl) {
-            console.log("レスポンスから取得した検証URLへアクセス中:", targetUrl);
-            
-            await page.goto(targetUrl, {
-              waitUntil: "domcontentloaded",
-              timeout: 60000
-            });
-
-            console.log("ページタイトル:", await page.title());
-            console.log("現在のURL:", page.url());
-
-            const debugInfo = await page.evaluate(() => ({
-              htmlSnippet: document.body.innerHTML.substring(0, 500),
-              localStorageKeys: Object.keys(localStorage),
-              sessionStorageKeys: Object.keys(sessionStorage)
-            }));
-            console.log("ページデバッグ情報:", JSON.stringify(debugInfo, null, 2));
-
-            await page.waitForFunction(() => {
-              return !location.pathname.includes("verify-login-email-address");
-            }, {
-              timeout: 60000
-            }).catch(() => {
-              console.log("タイムアウトまたは verify-login-email-address からの自動遷移が確認できませんでした。");
-            });
-
-            console.log("認証後URL:", page.url());
-
-            await page.screenshot({ path: "login_result.png", fullPage: true });
-            console.log("スクリーンショット 'login_result.png' を保存しました。");
-          }
-        }
-      } catch (e) {
-        console.log("レスポンスJSONの自動解析または検証URLアクセスに失敗しました:", e.message);
-      }
-
-      const currentCookies = await page.cookies();
-      console.log("--- ログイン後に取得されたCookie詳細 ---");
-      console.log(JSON.stringify(currentCookies, null, 2));
-      console.log("----------------------------------------");
+      console.log("注意: メール認証が要求されています。PADLET_VERIFICATION_URL 環境変数にメール内の検証リンクを設定して再実行してください。");
     }
 
     // ログイン状態およびホームページの確認
@@ -221,21 +183,22 @@ const puppeteer = require("puppeteer");
 
     console.log("ボードページを経由したコンテキストで非公開APIへアクセス中...");
     
-    const apiResult = await page.evaluate(async (targetApiUrl) => {
+    const apiResult = await page.evaluate(async (targetApiUrl, currentBoardUrl) => {
       const res = await fetch(targetApiUrl, {
         method: "GET",
         credentials: "include",
         headers: {
           "accept": "*/*",
           "prefer": "safe",
-          "x-requested-with": "XMLHttpRequest"
+          "x-requested-with": "XMLHttpRequest",
+          "referer": currentBoardUrl
         }
       });
       return {
         status: res.status,
         body: await res.text()
       };
-    }, apiUrl);
+    }, apiUrl, boardUrl);
 
     console.log("--- APIレスポンス結果詳細 ---");
     console.log("ステータス:", apiResult.status);
