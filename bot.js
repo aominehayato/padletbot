@@ -1,11 +1,14 @@
 const puppeteer = require("puppeteer");
+const path = require("path");
 
 (async () => {
   let browser = null;
   try {
     console.log("ブラウザを起動しています...");
+    // ログインセッションを永続化するために userDataDir を指定
     browser = await puppeteer.launch({
-      headless: true,
+      headless: false,
+      userDataDir: path.join(__dirname, "padlet-profile"),
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -49,11 +52,11 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    const email = process.env.PADLET_EMAIL;
-    const password = process.env.PADLET_PASSWORD;
     const cookiesJson = process.env.PADLET_COOKIES_JSON;
     const sessionCookie = process.env.PADLET_SESSION_COOKIE;
-    const verificationUrl = process.env.PADLET_VERIFICATION_URL; // メール認証用URL (例: https://padlet.com/auth/verify_login?verification_token=...)
+    
+    // ご自身の環境に合わせて、取得したverification_token付きURLをここに直接設定してください
+    const verificationUrl = process.env.PADLET_VERIFICATION_URL || "";
 
     // 事前認証用Cookieのインポート処理
     if (cookiesJson) {
@@ -90,115 +93,73 @@ const puppeteer = require("puppeteer");
     // verificationUrl が指定されている場合は直接認証URLへアクセスしてセッションを確立する
     if (verificationUrl) {
       console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
-      await page.goto(verificationUrl, { waitUntil: "networkidle2", timeout: 60000 });
+      await page.goto(verificationUrl, { waitUntil: "networkidle0", timeout: 120000 });
+      await new Promise(resolve => setTimeout(resolve, 5000));
       console.log("認証完了後のURL:", page.url());
-    } else if (email && password && !cookiesJson && !sessionCookie) {
-      console.log("Padletログインページへアクセス中...");
-      await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
-
-      console.log("webdriver:", await page.evaluate(() => navigator.webdriver));
-      console.log("userAgent:", await page.evaluate(() => navigator.userAgent));
-      const initialCookies = await page.cookies();
-      console.log("初期Cookie一覧:", initialCookies.map((c) => c.name));
-
-      console.log("CSRFトークンを取得中...");
-      const csrfToken = await page.evaluate(() => {
-        const meta = document.querySelector('meta[name="csrf-token"]');
-        return meta ? meta.content : null;
-      });
-
-      console.log("取得したCSRFトークン:", csrfToken);
-
-      console.log("事前チェックAPI（check-if-can-login）を実行中...");
-      await page.evaluate(async (userEmail) => {
-        await fetch(`/api/5/auth/check-if-can-login?email_or_username=${encodeURIComponent(userEmail)}`, {
-          method: "GET",
-          headers: { "accept": "*/*", "prefer": "safe" },
-          credentials: "include"
-        });
-      }, email);
-
-      console.log("ログインマニフェスト取得APIを実行中...");
-      await page.evaluate(async (userEmail) => {
-        await fetch(`/api/auth/login?email_or_username=${encodeURIComponent(userEmail)}`, {
-          method: "GET",
-          headers: { "accept": "application/json, application/vnd.api+json", "prefer": "safe" },
-          credentials: "include"
-        });
-      }, email);
-
-      console.log("認証API経由でログイン処理を実行中...");
-      const loginResponse = await page.evaluate(
-        async (userEmail, userPassword, token) => {
-          const res = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: {
-              "accept": "application/json, application/vnd.api+json",
-              "content-type": "application/json",
-              "prefer": "safe",
-              "x-csrf-token": token || ""
-            },
-            credentials: "include",
-            body: JSON.stringify({
-              username: userEmail,
-              password: userPassword
-            })
-          });
-
-          const headerEntries = [...res.headers.entries()];
-
-          return {
-            status: res.status,
-            headers: headerEntries,
-            body: await res.text()
-          };
-        },
-        email,
-        password,
-        csrfToken
-      );
-
-      console.log("ログインAPIレスポンスステータス:", loginResponse.status);
-      console.log("ログインAPIレスポンス結果:", loginResponse.body);
-
-      console.log("注意: メール認証が要求されています。PADLET_VERIFICATION_URL 環境変数にメール内の検証リンクを設定して再実行してください。");
+      
+      console.log("認証後に取得されたCookie詳細:");
+      console.log(JSON.stringify(await page.cookies(), null, 2));
     }
 
-    // ログイン状態およびホームページの確認
+    // Padletホームへアクセスしてログイン状態を確認中
     console.log("Padletホームへアクセスしてログイン状態を確認中...");
     await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
     console.log("ホーム画面タイトル:", await page.evaluate(() => document.title));
     console.log("ホーム画面URL:", await page.evaluate(() => location.href));
 
+    // ユーザー情報取得API（/api/5/users/me）でログインが完全に成功しているか検証
+    console.log("ログイン確認API (/api/5/users/me) を実行中...");
+    const meResult = await page.evaluate(async () => {
+      const r = await fetch("/api/5/users/me", {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "accept": "application/json"
+        }
+      });
+      return {
+        status: r.status,
+        text: await r.text()
+      };
+    });
+    console.log("ユーザー確認APIステータス:", meResult.status);
+    console.log("ユーザー確認APIレスポンス:", meResult.text);
+
     // 実際のボードページへ一度遷移してリファラーやセッション文脈を完全に一致させる
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle2" });
+    await page.goto(boardUrl, { waitUntil: "networkidle0" });
+
+    // ページを一度リロードしてSPAの状態を同期
+    await page.reload({ waitUntil: "networkidle0" });
 
     const allCookies = await page.cookies();
     console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
+    console.log("API直前のデバッグ情報:", JSON.stringify(await page.evaluate(() => ({
+      localStorageKeys: Object.keys(localStorage),
+      url: location.href
+    })), null, 2));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
     console.log("ボードページを経由したコンテキストで非公開APIへアクセス中...");
     
-    const apiResult = await page.evaluate(async (targetApiUrl, currentBoardUrl) => {
+    const apiResult = await page.evaluate(async (targetApiUrl) => {
       const res = await fetch(targetApiUrl, {
         method: "GET",
         credentials: "include",
         headers: {
           "accept": "*/*",
           "prefer": "safe",
-          "x-requested-with": "XMLHttpRequest",
-          "referer": currentBoardUrl
+          "cache-control": "no-cache"
         }
       });
       return {
         status: res.status,
         body: await res.text()
       };
-    }, apiUrl, boardUrl);
+    }, apiUrl);
 
     console.log("--- APIレスポンス結果詳細 ---");
     console.log("ステータス:", apiResult.status);
