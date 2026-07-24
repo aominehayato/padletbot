@@ -49,13 +49,27 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // ネットワーク監視の設定（Padlet自体のAPIリクエスト成功を検知）
+    // Padlet自体のAPIリクエストおよびレスポンスを完全に監視・捕捉
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.includes("/api/10/wishes")) {
+        console.log("===== PADLET自身による WISHES API リクエスト検出 =====");
+        console.log("リクエストURL:", url);
+        console.log("リクエストヘッダー:", req.headers());
+      }
+    });
+
     page.on("response", async (res) => {
       const url = res.url();
       if (url.includes("/api/10/wishes")) {
-        console.log("===== 検出された WISHES API レスポンス =====");
+        console.log("===== PADLET自身による WISHES API レスポンス検出 =====");
         console.log("ステータス:", res.status());
-        console.log("リクエストヘッダー:", res.request().headers());
+        try {
+          const body = await res.text();
+          console.log("レスポンスボディ抜粋:", body.slice(0, 300));
+        } catch (e) {
+          console.log("レスポンスボディ取得失敗:", e.message);
+        }
       }
     });
 
@@ -102,53 +116,37 @@ const puppeteer = require("puppeteer");
       await new Promise(resolve => setTimeout(resolve, 10000));
     }
 
-    // Padletホームへアクセスし、ww_atiなどのトラッキングCookieやStorageを完全に初期化
-    console.log("Padletホームへアクセスしてセッションおよびトラッキングを初期化中...");
-    await page.goto("https://padlet.com/", { waitUntil: "networkidle0" });
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // Padletホームへアクセスし、ww_ati などのトラッキングCookieが生成されるまで待機
+    console.log("Padletホームへアクセスしてセッションおよびトラッキング（ww_ati等）を初期化中...");
+    await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
+
+    try {
+      await page.waitForFunction(() => document.cookie.includes("ww_ati"), { timeout: 30000 });
+      console.log("ww_ati の生成を確認しました。");
+    } catch (e) {
+      console.log("ww_ati の生成待ちがタイムアウトしました。続行します。");
+    }
 
     const initialCookies = await page.cookies();
     console.log("初期化後の全Cookie名一覧:", initialCookies.map(c => c.name));
 
-    // 実際のボードページへ遷移してセッション文脈を同期
-    const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
-    console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle0" });
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    // Service Worker コントローラーの有効性を確認
+    const hasSwController = await page.evaluate(() => !!navigator.serviceWorker.controller);
+    console.log("Service Worker コントローラー有効状態:", hasSwController);
 
-    // ページのリロードによりSPA上の状態を完全に同期
-    await page.reload({ waitUntil: "networkidle0" });
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // 実際のボードページへ遷移してコンテキストを完全に構築
+    const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
+    console.log("ボードページへ移動してSPAおよびセッションコンテキストを構築中:", boardUrl);
+    await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
+
+    // SPAの初期化、Reactの起動、およびPadlet内部APIの自動発行を十分に待機する
+    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（30秒）...");
+    await new Promise(resolve => setTimeout(resolve, 30000));
 
     const finalCookies = await page.cookies();
-    console.log("API直前の全Cookie名一覧:", finalCookies.map(c => c.name));
+    console.log("最終的な全Cookie名一覧:", finalCookies.map(c => c.name));
 
-    // ボードページ上のコンテキストで相対パスを用いたAPIフェッチを実行
-    const apiUrlPath = "/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=" + Date.now();
-    console.log("ボードページのコンテキストでAPIへアクセス中:", apiUrlPath);
-
-    const apiResult = await page.evaluate(async (targetUrl) => {
-      const res = await fetch(targetUrl, {
-        method: "GET",
-        credentials: "include",
-        headers: {
-          "accept": "application/vnd.api+json, */*",
-          "prefer": "safe",
-          "cache-control": "no-cache",
-          "pragma": "no-cache"
-        }
-      });
-      return {
-        status: res.status,
-        body: await res.text()
-      };
-    }, apiUrlPath);
-
-    console.log("--- APIレスポンス結果詳細 ---");
-    console.log("ステータス:", apiResult.status);
-    console.log("レスポンスボディ:", apiResult.body);
-    console.log("-----------------------------");
-
+    console.log("処理が完了しました。ブラウザを終了します。");
     await browser.close();
     process.exit(0);
   } catch (error) {
