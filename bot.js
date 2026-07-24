@@ -4,7 +4,6 @@ const puppeteer = require("puppeteer");
   let browser = null;
   try {
     console.log("ブラウザを起動しています...");
-    // GitHub Actionsなどの環境で実行するため headless: true に設定しています
     browser = await puppeteer.launch({
       headless: true,
       userDataDir: "./padlet-profile",
@@ -25,40 +24,44 @@ const puppeteer = require("puppeteer");
       });
     });
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
-    );
-
-    // 全てのAPI通信および対象APIの詳細ヘッダーを追跡・監視設定
-    page.on("request", (req) => {
-      const url = req.url();
-      if (url.includes("/api/")) {
-        console.log("API REQUEST:", req.method(), url);
-      }
-      if (url.includes("/api/10/wishes")) {
-        console.log("===== TARGET WISHES API REQUEST HEADERS =====");
-        console.log(req.headers());
-        console.log("POST DATA:", req.postData());
-      }
-      if (req.isNavigationRequest()) {
-        console.log("NAV REQUEST:", req.url());
-      }
+    // Client Hints の偽装（Microsoft Edge環境を模倣）
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'userAgentData', {
+        get() {
+          return {
+            brands: [
+              { brand: "Not;A=Brand", version: "8" },
+              { brand: "Chromium", version: "150" },
+              { brand: "Microsoft Edge", version: "150" }
+            ],
+            mobile: false,
+            platform: "Windows"
+          };
+        }
+      });
     });
 
+    await page.setUserAgent(
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
+    );
+
+    await page.setExtraHTTPHeaders({
+      "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
+    });
+
+    // ネットワーク監視の設定（Padlet自体のAPIリクエスト成功を検知）
     page.on("response", async (res) => {
       const url = res.url();
-      if (url.includes("/api/")) {
-        console.log("API RESPONSE:", res.status(), url);
-      }
-      if (res.status() >= 300 && res.status() < 400) {
-        const headers = res.headers();
-        console.log("REDIRECT DETECTED:", res.status(), url, "->", headers["location"] || "No Location");
+      if (url.includes("/api/10/wishes")) {
+        console.log("===== 検出された WISHES API レスポンス =====");
+        console.log("ステータス:", res.status());
+        console.log("リクエストヘッダー:", res.request().headers());
       }
     });
 
     const cookiesJson = process.env.PADLET_COOKIES_JSON;
     const sessionCookie = process.env.PADLET_SESSION_COOKIE;
-    const verificationUrl = process.env.PADLET_VERIFICATION_URL; // 例: https://padlet.com/auth/verify_login?verification_token=...
+    const verificationUrl = process.env.PADLET_VERIFICATION_URL;
 
     // 事前認証用Cookieのインポート処理
     if (cookiesJson) {
@@ -92,68 +95,44 @@ const puppeteer = require("puppeteer");
       });
     }
 
-    // メール認証用URLが指定されている場合は直接アクセスしてセッションを完全に確立する
+    // メール認証用URLが指定されている場合の直接アクセス
     if (verificationUrl) {
       console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
       await page.goto(verificationUrl, { waitUntil: "networkidle0", timeout: 120000 });
       await new Promise(resolve => setTimeout(resolve, 10000));
-      console.log("認証完了後のURL:", page.url());
-      
-      const postVerificationCookies = await page.cookies();
-      console.log("認証直後の全Cookie名一覧:", postVerificationCookies.map(c => c.name));
     }
 
-    // Padletホームへアクセスしてログイン状態を確認中
-    console.log("Padletホームへアクセスしてログイン状態を確認中...");
-    await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
-    console.log("ホーム画面タイトル:", await page.evaluate(() => document.title));
-    console.log("ホーム画面URL:", await page.evaluate(() => location.href));
+    // Padletホームへアクセスし、ww_atiなどのトラッキングCookieやStorageを完全に初期化
+    console.log("Padletホームへアクセスしてセッションおよびトラッキングを初期化中...");
+    await page.goto("https://padlet.com/", { waitUntil: "networkidle0" });
+    await new Promise(resolve => setTimeout(resolve, 10000));
 
-    // Service Workerの登録状況を確認
-    const swRegistrations = await page.evaluate(async () => {
-      try {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        return regs.map(r => r.scope);
-      } catch (e) {
-        return e.message;
-      }
-    });
-    console.log("Service Worker スコープ一覧:", swRegistrations);
+    const initialCookies = await page.cookies();
+    console.log("初期化後の全Cookie名一覧:", initialCookies.map(c => c.name));
 
-    // LocalStorageおよびSessionStorageのキー一覧を確認
-    const storageInfo = await page.evaluate(() => {
-      return {
-        localStorageKeys: Object.keys(localStorage),
-        sessionStorageKeys: Object.keys(sessionStorage)
-      };
-    });
-    console.log("ストレージ情報:", storageInfo);
-
-    // 実際のボードページへ一度遷移してリファラーやセッション文脈を完全に一致させる
+    // 実際のボードページへ遷移してセッション文脈を同期
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle2" });
+    await page.goto(boardUrl, { waitUntil: "networkidle0" });
     await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // 念のためページをリロードしてSPA上の状態を確実に同期する
+    // ページのリロードによりSPA上の状態を完全に同期
     await page.reload({ waitUntil: "networkidle0" });
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
-    const allCookies = await page.cookies();
-    console.log("API直前の全Cookie名一覧:", allCookies.map(c => c.name));
-    console.log("API直前の全Cookie一覧の詳細:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
-    console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
+    const finalCookies = await page.cookies();
+    console.log("API直前の全Cookie名一覧:", finalCookies.map(c => c.name));
 
-    const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
+    // ボードページ上のコンテキストで相対パスを用いたAPIフェッチを実行
+    const apiUrlPath = "/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=" + Date.now();
+    console.log("ボードページのコンテキストでAPIへアクセス中:", apiUrlPath);
 
-    console.log("ボードページを経由したコンテキストで非公開APIへアクセス中...");
-    
-    // ブラウザのネイティブなfetchを用いてAPIへアクセス
-    const apiResult = await page.evaluate(async (targetApiUrl) => {
-      const res = await fetch(targetApiUrl, {
+    const apiResult = await page.evaluate(async (targetUrl) => {
+      const res = await fetch(targetUrl, {
         method: "GET",
         credentials: "include",
         headers: {
-          "accept": "*/*",
+          "accept": "application/vnd.api+json, */*",
           "prefer": "safe",
           "cache-control": "no-cache",
           "pragma": "no-cache"
@@ -163,7 +142,7 @@ const puppeteer = require("puppeteer");
         status: res.status,
         body: await res.text()
       };
-    }, apiUrl);
+    }, apiUrlPath);
 
     console.log("--- APIレスポンス結果詳細 ---");
     console.log("ステータス:", apiResult.status);
