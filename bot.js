@@ -14,11 +14,13 @@ const puppeteer = require("puppeteer");
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-blink-features=AutomationControlled"
+        "--disable-blink-features=AutomationControlled",
+        "--window-size=1920,1080"
       ]
     });
 
     const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
 
     // navigator.webdriver の秘匿化
     await page.evaluateOnNewDocument(() => {
@@ -60,7 +62,7 @@ const puppeteer = require("puppeteer");
     // Padlet自体のAPIリクエストを監視し、認証に必要なヘッダーを動的にキャプチャする
     page.on("request", (req) => {
       const url = req.url();
-      if (url.includes("/api/10/") || url.includes("/api/9/")) {
+      if (url.includes("/api/")) {
         const headers = req.headers();
         const auth = headers["authorization"];
         const csrf = headers["x-csrf-token"];
@@ -106,7 +108,11 @@ const puppeteer = require("puppeteer");
     });
     console.log("ログイン状態:", loggedIn);
 
-    // localStorage の内容を確認してトークン等の有無を調査
+    // document.cookie の出力を追加して、Puppeteerのcookies()との差異を調査
+    const docCookie = await page.evaluate(() => document.cookie);
+    console.log("document.cookie の内容:", docCookie);
+
+    // LocalStorage の内容を確認してトークン等の有無を調査
     const localStorages = await page.evaluate(() => {
       const items = [];
       for (let i = 0; i < localStorage.length; i++) {
