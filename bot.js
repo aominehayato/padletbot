@@ -54,12 +54,46 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // 認証情報を保持するための変数
-    let capturedAuth = {
-      authorization: null
-    };
+    // ページ内スクリプトからAPI情報を収集するための暴露用オブジェクトを設置
+    await page.evaluateOnNewDocument(() => {
+      window.__capturedApiData = {
+        authorization: null,
+        csrf: null,
+        uid: null,
+        wall_id: null,
+        wall_hashid: null
+      };
 
-    // Padlet公式APIリクエストのみを対象に監視・キャプチャを設定
+      const captureHeaders = (headers) => {
+        if (!headers) return;
+        if (headers instanceof Headers) {
+          const a = headers.get('authorization'); if (a) window.__capturedApiData.authorization = a;
+          const c = headers.get('x-csrf-token'); if (c) window.__capturedApiData.csrf = c;
+          const u = headers.get('x-uid'); if (u) window.__capturedApiData.uid = u;
+          return;
+        }
+        for (const key in headers) {
+          const lk = key.toLowerCase();
+          const v = headers[key];
+          if (lk === 'authorization') window.__capturedApiData.authorization = v;
+          else if (lk === 'x-csrf-token') window.__capturedApiData.csrf = v;
+          else if (lk === 'x-uid') window.__capturedApiData.uid = v;
+        }
+      };
+
+      // fetch のフック
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        const options = args[1];
+        if (options) {
+          captureHeaders(options.headers);
+        }
+        const response = await originalFetch(...args);
+        return response;
+      };
+    });
+
+    // Padlet公式APIリクエストの監視
     page.on("request", (req) => {
       const url = req.url();
       const headers = req.headers();
@@ -68,22 +102,15 @@ const puppeteer = require("puppeteer");
         console.log("\n===== PADLET API REQUEST =====");
         console.log("URL:", url);
 
-        if (headers.authorization && !capturedAuth.authorization) {
-          capturedAuth.authorization = headers.authorization;
-          console.log("[API AUTH CAPTURED] Authorization:", headers.authorization);
-        }
-
-        const postData = req.postData();
-        if (postData) {
-          console.log("BODY:", postData);
+        if (headers.authorization) {
+          console.log("[REQUEST HEADER AUTH]:", headers.authorization);
         }
       }
     });
 
-    // Padlet公式APIレスポンスのみを対象にJSONを解析して監視
+    // Padlet公式APIレスポンスの監視
     page.on("response", async (res) => {
       const url = res.url();
-
       if (!url.includes("padlet.com/api")) {
         return;
       }
@@ -93,25 +120,13 @@ const puppeteer = require("puppeteer");
 
       try {
         const json = await res.json();
-        console.log("Response JSON snippet:", JSON.stringify(json).slice(0, 1000));
+        console.log("Response JSON snippet:", JSON.stringify(json).slice(0, 500));
       } catch (e) {
         console.log("Response body parse failed or not JSON");
       }
     });
 
-    // WebSocketの監視追加
-    page.on("websocket", (ws) => {
-      console.log("\n===== WEBSOCKET CREATED =====");
-      console.log("URL:", ws.url());
-
-      ws.on("framereceived", (frame) => {
-        if (frame.payloadData) {
-          console.log("WS DATA RECEIVED:", frame.payloadData.substring(0, 300));
-        }
-      });
-    });
-
-    // 実際のボードページへ直接遷移（SPAの初期化を確実にするため domcontentloaded を採用）
+    // 実際のボードページへ直接遷移
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
@@ -130,16 +145,18 @@ const puppeteer = require("puppeteer");
     const docCookie = await page.evaluate(() => document.cookie);
     console.log("document.cookie の内容:", docCookie);
 
-    // キャプチャされた認証情報の確認
-    console.log("キャプチャされた認証情報:", capturedAuth);
+    // ページ内でフックして収集した認証情報を取得
+    const pageCapturedAuth = await page.evaluate(() => window.__capturedApiData);
+    console.log("ページ内フックでキャプチャされた認証情報:", pageCapturedAuth);
 
     // ブラウザの全Cookieを取得
     const cookies = await page.cookies();
     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join("; ");
     console.log("構築済みCookie文字列:", cookieString);
 
-    // キャプチャされた認証情報を用いて、ブラウザコンテキストから DELETE API を実行
-    if (capturedAuth.authorization) {
+    // キャプチャされた認証情報（またはCookie）を用いて、ブラウザコンテキストから DELETE API を実行
+    const authHeaderToUse = pageCapturedAuth.authorization;
+    if (authHeaderToUse) {
       console.log("Authorizationが取得できたため、DELETE APIを実行します...");
       const deleteResult = await page.evaluate(async (auth) => {
         try {
@@ -153,14 +170,7 @@ const puppeteer = require("puppeteer");
               "cache-control": "no-cache",
               "content-type": "application/json; charset=utf-8",
               "pragma": "no-cache",
-              "prefer": "safe",
-              "priority": "u=1, i",
-              "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Microsoft Edge\";v=\"150\"",
-              "sec-ch-ua-mobile": "?0",
-              "sec-ch-ua-platform": "\"Windows\"",
-              "sec-fetch-dest": "empty",
-              "sec-fetch-mode": "same-origin",
-              "sec-fetch-site": "same-origin"
+              "prefer": "safe"
             }
           });
           return {
@@ -171,11 +181,11 @@ const puppeteer = require("puppeteer");
         } catch (err) {
           return { error: err.message };
         }
-      }, capturedAuth.authorization);
+      }, authHeaderToUse);
 
       console.log("DELETE API 実行結果:", deleteResult);
     } else {
-      console.log("警告: Authorizationヘッダーがキャプチャされませんでした。");
+      console.log("警告: ページ内フックでもAuthorizationヘッダーが取得できませんでした（Cookieセッション認証の可能性があります）。");
     }
 
     const finalCookies = await page.cookies();
