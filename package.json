@@ -4,7 +4,9 @@
   "description": "Padlet Bot for GitHub Actions with Profile Separation",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js bot"
+    "start": "node bot.js",
+    "bot": "node bot.js bot",
+    "user": "node bot.js user"
   },
   "dependencies": {
     "puppeteer": "^24.0.0"
