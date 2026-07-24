@@ -3,10 +3,13 @@ const puppeteer = require("puppeteer");
 (async () => {
   let browser = null;
   try {
+    const account = process.argv[2] || "bot";
+    console.log(`使用プロファイル: ${account}`);
+
     console.log("ブラウザを起動しています...");
     browser = await puppeteer.launch({
       headless: true,
-      userDataDir: "./padlet-profile",
+      userDataDir: `./profiles/${account}`,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
