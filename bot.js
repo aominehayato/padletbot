@@ -49,7 +49,7 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // Padlet自体のAPIリクエストおよびレスポンスを完全に監視・捕捉
+    // Padlet自体のAPIリクエストおよびレスポンスを完全に監視・捕捉する設定
     page.on("request", (req) => {
       const url = req.url();
       if (url.includes("/api/10/wishes")) {
@@ -66,7 +66,7 @@ const puppeteer = require("puppeteer");
         console.log("ステータス:", res.status());
         try {
           const body = await res.text();
-          console.log("レスポンスボディ抜粋:", body.slice(0, 300));
+          console.log("取得したAPIレスポンスボディ抜粋:", body.slice(0, 500));
         } catch (e) {
           console.log("レスポンスボディ取得失敗:", e.message);
         }
@@ -127,21 +127,35 @@ const puppeteer = require("puppeteer");
       console.log("ww_ati の生成待ちがタイムアウトしました。続行します。");
     }
 
-    const initialCookies = await page.cookies();
-    console.log("初期化後の全Cookie名一覧:", initialCookies.map(c => c.name));
+    // Service Worker コントローラーを有効化するため、一度ページをリロード
+    console.log("Service Worker を有効化するためページを再読み込みします...");
+    await page.reload({ waitUntil: "networkidle0" });
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
-    // Service Worker コントローラーの有効性を確認
     const hasSwController = await page.evaluate(() => !!navigator.serviceWorker.controller);
     console.log("Service Worker コントローラー有効状態:", hasSwController);
 
     // 実際のボードページへ遷移してコンテキストを完全に構築
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ移動してSPAおよびセッションコンテキストを構築中:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
+    await page.goto(boardUrl, { waitUntil: "networkidle2" });
 
-    // SPAの初期化、Reactの起動、およびPadlet内部APIの自動発行を十分に待機する
-    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（30秒）...");
-    await new Promise(resolve => setTimeout(resolve, 30000));
+    // ページの初期化とAPI自動発行を十分に待機
+    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
+    await new Promise(resolve => setTimeout(resolve, 15000));
+
+    // スクロール操作を行ってPadletのAPIフェッチ（無限スクロール等）を強制発火させる
+    console.log("ページ内スクロールを実行してAPIリクエストの発生を促します...");
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight / 2);
+    });
+    await new Promise(resolve => setTimeout(resolve, 10000));
+
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    console.log("追加のAPIレスポンスを待機しています（20秒）...");
+    await new Promise(resolve => setTimeout(resolve, 20000));
 
     const finalCookies = await page.cookies();
     console.log("最終的な全Cookie名一覧:", finalCookies.map(c => c.name));
