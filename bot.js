@@ -26,31 +26,49 @@ const puppeteer = require("puppeteer");
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
-      console.log("メールアドレス入力欄の表示を待機中...");
-      await page.waitForSelector("input[type='email']", { timeout: 15000 });
-      await page.type("input[type='email']", email);
+      console.log("CSRFトークンを取得中...");
+      const csrfToken = await page.evaluate(() => {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? meta.content : null;
+      });
 
-      const passwordInput = await page.$("input[type='password']");
-      if (passwordInput) {
-        console.log("パスワードを入力中...");
-        await page.type("input[type='password']", password);
-      } else {
-        console.log("「次へ」操作を実行中...");
-        await page.keyboard.press("Enter");
-        await page.waitForSelector("input[type='password']", { timeout: 15000 });
-        await page.type("input[type='password']", password);
-      }
+      console.log("取得したCSRFトークン:", csrfToken);
 
-      console.log("ログインフォームを送信中...");
-      await page.keyboard.press("Enter");
+      console.log("認証API経由でログイン処理を実行中...");
+      const loginResponse = await page.evaluate(
+        async (userEmail, userPassword, token) => {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: {
+              "accept": "application/json, application/vnd.api+json",
+              "content-type": "application/json",
+              "prefer": "safe",
+              "x-csrf-token": token || ""
+            },
+            credentials: "include",
+            body: JSON.stringify({
+              username: userEmail,
+              password: userPassword
+            })
+          });
+          return {
+            status: res.status,
+            body: await res.text()
+          };
+        },
+        email,
+        password,
+        csrfToken
+      );
 
-      console.log("通信完了まで5秒間待機します...");
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      console.log("ログインAPIレスポンスステータス:", loginResponse.status);
+      console.log("ログインAPIレスポンス結果:", loginResponse.body);
 
-      console.log("現在のURL:", page.url());
+      console.log("通信完了まで3秒間待機します...");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const cookies = await page.cookies();
-      console.log("取得されたCookie一覧:", cookies.map((c) => c.name));
+      console.log("ログイン後に取得されたCookie一覧:", cookies.map((c) => c.name));
     } else {
       console.log("ログイン環境変数が設定されていないため、未認証の状態で処理を継続します。");
     }
