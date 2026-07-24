@@ -96,8 +96,11 @@ const puppeteer = require("puppeteer");
     if (verificationUrl) {
       console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
       await page.goto(verificationUrl, { waitUntil: "networkidle0", timeout: 120000 });
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise(resolve => setTimeout(resolve, 10000));
       console.log("認証完了後のURL:", page.url());
+      
+      const postVerificationCookies = await page.cookies();
+      console.log("認証直後の全Cookie名一覧:", postVerificationCookies.map(c => c.name));
     }
 
     // Padletホームへアクセスしてログイン状態を確認中
@@ -117,34 +120,27 @@ const puppeteer = require("puppeteer");
     });
     console.log("Service Worker スコープ一覧:", swRegistrations);
 
-    // 実際にログイン済みかどうかをAPI（/api/5/users/me）で検証する
-    console.log("/api/5/users/me を用いてログイン状態を検証中...");
-    const meResult = await page.evaluate(async () => {
-      const res = await fetch("/api/5/users/me", {
-        method: "GET",
-        credentials: "include",
-        headers: {
-          "accept": "application/json"
-        }
-      });
+    // LocalStorageおよびSessionStorageのキー一覧を確認
+    const storageInfo = await page.evaluate(() => {
       return {
-        status: res.status,
-        text: await res.text()
+        localStorageKeys: Object.keys(localStorage),
+        sessionStorageKeys: Object.keys(sessionStorage)
       };
     });
-    console.log("ユーザー検証APIステータス:", meResult.status);
-    console.log("ユーザー検証APIレスポンス:", meResult.text);
+    console.log("ストレージ情報:", storageInfo);
 
     // 実際のボードページへ一度遷移してリファラーやセッション文脈を完全に一致させる
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "networkidle2" });
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     // 念のためページをリロードしてSPA上の状態を確実に同期する
     await page.reload({ waitUntil: "networkidle0" });
 
     const allCookies = await page.cookies();
-    console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
+    console.log("API直前の全Cookie名一覧:", allCookies.map(c => c.name));
+    console.log("API直前の全Cookie一覧の詳細:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
