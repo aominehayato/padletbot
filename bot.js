@@ -19,14 +19,34 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
     );
 
-    console.log("PadletのページへアクセスしてCookieを自動取得中...");
+    const email = process.env.PADLET_EMAIL;
+    const password = process.env.PADLET_PASSWORD;
+
+    if (email && password) {
+      console.log("Padletログインページへアクセス中...");
+      await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
+
+      console.log("ログイン情報を入力中...");
+      await page.type("input[type='email']", email);
+      await page.type("input[type='password']", password);
+
+      await Promise.all([
+        page.click("button[type='submit']"),
+        page.waitForNavigation({ waitUntil: "networkidle2" })
+      ]);
+      console.log("ログイン処理が完了しました。");
+    } else {
+      console.log("ログイン環境変数が設定されていないため、未認証の状態で処理を継続します。");
+    }
+
+    console.log("Padletの目的のボードページへアクセス中...");
     await page.goto("https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1", {
       waitUntil: "networkidle2"
     });
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
-    console.log("取得したCookieとセッションを用いて非公開APIへリクエストを送信中...");
+    console.log("確立された認証セッションを用いて非公開APIへリクエストを送信中...");
     const apiResult = await page.evaluate(async (url) => {
       const response = await fetch(url, {
         method: "GET",
