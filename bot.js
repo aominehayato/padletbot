@@ -72,7 +72,7 @@ const puppeteer = require("puppeteer");
     const createdPostId = createData.data.id;
     console.log(`投稿の作成に成功しました。作成された投稿ID: ${createdPostId}`);
 
-    // Step 3: Puppeteerを起動してブラウザ経由でボードを開き、削除時の通信をCDPでキャプチャする
+    // Step 3: Puppeteerを起動してネットワーク通信の全容をCDPで監視・キャプチャする
     console.log("ブラウザを起動しています...");
     browser = await puppeteer.launch({
       headless: true,
@@ -121,7 +121,7 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // CDPセッションを使ってネットワーク監視を行い、DELETEリクエスト時の完全なヘッダーをキャプチャする
+    // CDPセッションで全リクエストを監視し、送受信されるヘッダーをすべてログ出力・捕捉する
     const client = await page.target().createCDPSession();
     await client.send("Network.enable");
 
@@ -133,33 +133,37 @@ const puppeteer = require("puppeteer");
 
     client.on("Network.requestWillBeSent", (event) => {
       const url = event.request.url;
+      const method = event.request.method;
       const headers = event.request.headers;
 
-      if (url.includes("/api/")) {
-        const auth = headers["authorization"];
-        const csrf = headers["x-csrf-token"];
-        const uid = headers["x-uid"];
+      console.log(`[REQUEST] ${method} ${url}`);
 
-        if (auth && auth.startsWith("Bearer ")) {
+      // すべてのリクエストから条件に合う認証情報を探索
+      const auth = headers["authorization"] || headers["Authorization"];
+      const csrf = headers["x-csrf-token"] || headers["X-CSRF-Token"];
+      const uid = headers["x-uid"] || headers["X-UID"];
+
+      if (auth) {
+        console.log(`[CDP CAPTURE] Authorization 検出 (${auth.substring(0, 15)}...):`, auth);
+        if (auth.startsWith("Bearer ")) {
           capturedAuth.authorization = auth;
-          console.log("[CDP CAPTURE] Bearer Authorization 検出:", auth);
         }
-        if (csrf) {
-          capturedAuth.csrf = csrf;
-          console.log("[CDP CAPTURE] CSRF Token 検出:", csrf);
-        }
-        if (uid) {
-          capturedAuth.uid = uid;
-          console.log("[CDP CAPTURE] UID 検出:", uid);
-        }
+      }
+      if (csrf) {
+        capturedAuth.csrf = csrf;
+        console.log("[CDP CAPTURE] CSRF Token 検出:", csrf);
+      }
+      if (uid) {
+        capturedAuth.uid = uid;
+        console.log("[CDP CAPTURE] UID 検出:", uid);
       }
     });
 
     console.log("ボードページへ移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
 
-    console.log("SPAの初期化と作成した投稿の描画・通信発生を待機しています（15秒）...");
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log("SPAの初期化と通信発生を待機しています（20秒）...");
+    await new Promise(resolve => setTimeout(resolve, 20000));
 
     // ログイン状態の確認
     const loggedIn = await page.evaluate(() => {
