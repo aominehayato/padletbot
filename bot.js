@@ -54,68 +54,47 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // ページ内 fetch / XHR を強力にフックして認証情報（Authorization, x-csrf-token, x-uid）を自動キャプチャする
-    await page.evaluateOnNewDocument(() => {
-      window.__padletAuth = {
-        authorization: null,
-        csrf: null,
-        uid: null
-      };
+    // リクエストインターセプションを有効化し、実際のネットワーク送信ヘッダーからBearer認証やCSRF、UIDを確実に捕捉する
+    await page.setRequestInterception(true);
 
-      const parseHeaders = (headers) => {
-        if (!headers) return;
-        if (headers instanceof Headers) {
-          const auth = headers.get('authorization');
-          const csrf = headers.get('x-csrf-token');
-          const uid = headers.get('x-uid');
-          if (auth) window.__padletAuth.authorization = auth;
-          if (csrf) window.__padletAuth.csrf = csrf;
-          if (uid) window.__padletAuth.uid = uid;
-        } else if (typeof headers === 'object') {
-          for (const key in headers) {
-            const lk = key.toLowerCase();
-            const val = headers[key];
-            if (lk === 'authorization') window.__padletAuth.authorization = val;
-            if (lk === 'x-csrf-token') window.__padletAuth.csrf = val;
-            if (lk === 'x-uid') window.__padletAuth.uid = val;
-          }
+    const capturedAuth = {
+      authorization: null,
+      csrf: null,
+      uid: null
+    };
+
+    page.on("request", (req) => {
+      const url = req.url();
+      const headers = req.headers();
+
+      if (url.includes("padlet.com/api")) {
+        const auth = headers["authorization"];
+        const csrf = headers["x-csrf-token"];
+        const uid = headers["x-uid"];
+
+        if (auth && auth.startsWith("Bearer ")) {
+          capturedAuth.authorization = auth;
+          console.log("[CAPTURE] Bearer Authorization 検出:", auth);
         }
-      };
-
-      // fetch のフック
-      const originalFetch = window.fetch.bind(window);
-      window.fetch = async (...args) => {
-        if (args[1] && args[1].headers) {
-          parseHeaders(args[1].headers);
+        if (csrf) {
+          capturedAuth.csrf = csrf;
+          console.log("[CAPTURE] CSRF Token 検出:", csrf);
         }
-        const res = await originalFetch(...args);
-        return res;
-      };
-
-      // XHR のフック
-      const originalOpen = XMLHttpRequest.prototype.open;
-      const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-      
-      XMLHttpRequest.prototype.open = function(method, url) {
-        this._requestHeaders = {};
-        return originalOpen.apply(this, arguments);
-      };
-
-      XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-        if (this._requestHeaders) {
-          this._requestHeaders[header] = value;
-          parseHeaders(this._requestHeaders);
+        if (uid) {
+          capturedAuth.uid = uid;
+          console.log("[CAPTURE] UID 検出:", uid);
         }
-        return originalSetRequestHeader.apply(this, arguments);
-      };
+      }
+
+      req.continue();
     });
 
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
 
-    console.log("SPAの初期化とAPI通信の発生を待機しています（15秒）...");
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log("SPAの初期化とAPI通信の発生を待機しています（20秒）...");
+    await new Promise(resolve => setTimeout(resolve, 20000));
 
     // ログイン状態の確認
     const loggedIn = await page.evaluate(() => {
@@ -123,9 +102,7 @@ const puppeteer = require("puppeteer");
     });
     console.log("ログイン状態:", loggedIn);
 
-    // キャプチャされた認証情報の取得
-    const capturedAuth = await page.evaluate(() => window.__padletAuth);
-    console.log("キャプチャされた認証情報:", capturedAuth);
+    console.log("最終的にキャプチャされた認証情報:", capturedAuth);
 
     // Cookie情報の取得
     const cookies = await page.cookies();
@@ -165,7 +142,7 @@ const puppeteer = require("puppeteer");
 
       console.log("API 実行結果:", apiResult);
     } else {
-      console.log("警告: 必要な認証情報の一部がキャプチャできませんでした。待機時間を伸ばすか、追加のアクションが必要です。");
+      console.log("警告: 必要な認証情報の一部がキャプチャできませんでした。待機時間を伸ばすか、ページ内で追加のアクションが必要です。");
     }
 
     console.log("処理が完了しました。ブラウザを終了します。");
