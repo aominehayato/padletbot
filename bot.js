@@ -27,7 +27,7 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
-    // 全てのAPI通信およびナビゲーションリクエストの追跡・監視設定
+    // 全てのAPI通信およびナビゲーションリクエスト・リダイレクトの追跡・監視設定
     page.on("request", (req) => {
       const url = req.url();
       if (url.includes("/api/")) {
@@ -38,10 +38,15 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    page.on("response", async (response) => {
-      const url = response.url();
+    page.on("response", async (res) => {
+      const url = res.url();
       if (url.includes("/api/")) {
-        console.log("API RESPONSE:", response.status(), url);
+        console.log("API RESPONSE:", res.status(), url);
+      }
+      // リダイレクトの追跡（300番台レスポンスとLocationヘッダーの監視）
+      if (res.status() >= 300 && res.status() < 400) {
+        const headers = res.headers();
+        console.log("REDIRECT DETECTED:", res.status(), url, "->", headers["location"] || "No Location");
       }
     });
 
@@ -134,8 +139,13 @@ const puppeteer = require("puppeteer");
               password: userPassword
             })
           });
+
+          // レスポンスヘッダーのエントリを詳細に出力するため配列として取得
+          const headerEntries = [...res.headers.entries()];
+
           return {
             status: res.status,
+            headers: headerEntries,
             body: await res.text()
           };
         },
@@ -145,6 +155,7 @@ const puppeteer = require("puppeteer");
       );
 
       console.log("ログインAPIレスポンスステータス:", loginResponse.status);
+      console.log("ログインAPIレスポンスヘッダー:", JSON.stringify(loginResponse.headers, null, 2));
       console.log("ログインAPIレスポンス結果:", loginResponse.body);
 
       try {
@@ -154,7 +165,6 @@ const puppeteer = require("puppeteer");
           if (targetUrl) {
             console.log("レスポンスから取得した検証URLへアクセス中:", targetUrl);
             
-            // domcontentloadedで素早くアクセスし、その後の動的遷移や自動リダイレクトを待機
             await page.goto(targetUrl, {
               waitUntil: "domcontentloaded",
               timeout: 60000
@@ -163,7 +173,6 @@ const puppeteer = require("puppeteer");
             console.log("ページタイトル:", await page.title());
             console.log("現在のURL:", page.url());
 
-            // ページのHTMLコンテンツやローカルストレージの状態をデバッグ出力
             const debugInfo = await page.evaluate(() => ({
               htmlSnippet: document.body.innerHTML.substring(0, 500),
               localStorageKeys: Object.keys(localStorage),
@@ -171,7 +180,6 @@ const puppeteer = require("puppeteer");
             }));
             console.log("ページデバッグ情報:", JSON.stringify(debugInfo, null, 2));
 
-            // 認証フローの完了（verify-login-email-addressからの離脱）を最大60秒待機
             await page.waitForFunction(() => {
               return !location.pathname.includes("verify-login-email-address");
             }, {
@@ -182,7 +190,6 @@ const puppeteer = require("puppeteer");
 
             console.log("認証後URL:", page.url());
 
-            // 状態確認用のスクリーンショットを保存
             await page.screenshot({ path: "login_result.png", fullPage: true });
             console.log("スクリーンショット 'login_result.png' を保存しました。");
           }
@@ -197,23 +204,34 @@ const puppeteer = require("puppeteer");
       console.log("----------------------------------------");
     }
 
-    // デバッグ情報の出力（全Cookie情報を網羅して出力）
     const allCookies = await page.cookies();
     console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
-    console.log("ブラウザの通常ナビゲーション（page.goto）を用いて非公開APIへ直接アクセス中...");
+    console.log("fetch を用いて非公開APIへ直接アクセス中...");
     
-    await page.goto(apiUrl, {
-      waitUntil: "networkidle2"
-    });
+    // page.goto ではなく fetch を用いてChrome通信を完全再現
+    const apiResult = await page.evaluate(async (targetApiUrl) => {
+      const res = await fetch(targetApiUrl, {
+        method: "GET",
+        credentials: "include",
+        headers: {
+          "accept": "application/json, application/vnd.api+json",
+          "x-requested-with": "XMLHttpRequest"
+        }
+      });
+      return {
+        status: res.status,
+        body: await res.text()
+      };
+    }, apiUrl);
 
-    console.log("--- APIレスポンス結果詳細（ページコンテンツ） ---");
-    const responseContent = await page.content();
-    console.log(responseContent);
-    console.log("-------------------------------------------------");
+    console.log("--- APIレスポンス結果詳細 ---");
+    console.log("ステータス:", apiResult.status);
+    console.log("レスポンスボディ:", apiResult.body);
+    console.log("-----------------------------");
 
     await browser.close();
     process.exit(0);
