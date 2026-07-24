@@ -1,12 +1,60 @@
 const puppeteer = require("puppeteer");
+const axios = require("axios");
 
 (async () => {
   let browser = null;
   try {
     const account = process.argv[2] || "bot";
+    const API_KEY = "YOUR_PADLET_API_KEY";
+    const BOARD_ID = "wy32bauth9n4npi1";
     console.log(`使用プロファイル: ${account}`);
 
-    console.log("ブラウザを起動しています...");
+    console.log("1. 公式APIを使用して左端のセクションIDを取得しています...");
+    const boardRes = await axios.get(`https://api.padlet.dev/v1/boards/${BOARD_ID}?include=posts,sections`, {
+      headers: {
+        "X-API-KEY": API_KEY,
+        "accept": "application/vnd.api+json"
+      }
+    });
+
+    const sections = boardRes.data.included.filter(x => x.type === "section");
+    if (!sections || sections.length === 0) {
+      throw new Error("セクションが見つかりませんでした。");
+    }
+    const targetSectionId = sections[0].id;
+    console.log(`左端のセクションIDを取得しました: ${targetSectionId}`);
+
+    console.log("2. 公式APIを使用して指定セクションに新規投稿を作成しています...");
+    const createRes = await axios.post(`https://api.padlet.dev/v1/boards/${BOARD_ID}/posts`, {
+      data: {
+        type: "post",
+        attributes: {
+          content: {
+            subject: "自動テスト投稿",
+            body: "公式APIから自動作成しました"
+          },
+          color: "red"
+        },
+        relationships: {
+          section: {
+            data: {
+              id: targetSectionId
+            }
+          }
+        }
+      }
+    }, {
+      headers: {
+        "X-API-KEY": API_KEY,
+        "content-type": "application/vnd.api+json",
+        "accept": "application/vnd.api+json"
+      }
+    });
+
+    const createdPostId = createRes.data.data.id;
+    console.log(`新規投稿の作成に成功しました。投稿ID: ${createdPostId}`);
+
+    console.log("3. ブラウザを起動してボードページを開き、削除用APIの通信を監視します...");
     browser = await puppeteer.launch({
       headless: true,
       userDataDir: `./profiles/${account}`,
@@ -54,8 +102,9 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // リクエストインターセプションを有効化し、実際のネットワーク送信ヘッダーからBearer認証やCSRF、UIDを確実に捕捉する
-    await page.setRequestInterception(true);
+    // CDPセッションを使用してネットワーク層から直接DELETEリクエストや認証情報を監視・捕捉する
+    const client = await page.target().createCDPSession();
+    await client.send("Network.enable");
 
     const capturedAuth = {
       authorization: null,
@@ -63,9 +112,9 @@ const puppeteer = require("puppeteer");
       uid: null
     };
 
-    page.on("request", (req) => {
-      const url = req.url();
-      const headers = req.headers();
+    client.on("Network.requestWillBeSent", (event) => {
+      const url = event.request.url;
+      const headers = event.request.headers;
 
       if (url.includes("padlet.com/api")) {
         const auth = headers["authorization"];
@@ -74,48 +123,45 @@ const puppeteer = require("puppeteer");
 
         if (auth && auth.startsWith("Bearer ")) {
           capturedAuth.authorization = auth;
-          console.log("[CAPTURE] Bearer Authorization 検出:", auth);
+          console.log("[CDP CAPTURE] Bearer Authorization 検出:", auth);
         }
         if (csrf) {
           capturedAuth.csrf = csrf;
-          console.log("[CAPTURE] CSRF Token 検出:", csrf);
+          console.log("[CDP CAPTURE] CSRF Token 検出:", csrf);
         }
         if (uid) {
           capturedAuth.uid = uid;
-          console.log("[CAPTURE] UID 検出:", uid);
+          console.log("[CDP CAPTURE] UID 検出:", uid);
         }
       }
-
-      req.continue();
     });
 
-    const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
-    console.log("ボードページへ直接移動します:", boardUrl);
+    const boardUrl = `https://padlet.com/magnificentconferenceliteracy/${BOARD_ID}`;
+    console.log("ボードページへ移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
 
-    console.log("SPAの初期化とAPI通信の発生を待機しています（20秒）...");
-    await new Promise(resolve => setTimeout(resolve, 20000));
+    console.log("SPAの初期化と通信の発生を待機しています（15秒）...");
+    await new Promise(resolve => setTimeout(resolve, 15000));
 
     // ログイン状態の確認
     const loggedIn = await page.evaluate(() => {
       return !location.pathname.includes("/login");
     });
     console.log("ログイン状態:", loggedIn);
-
-    console.log("最終的にキャプチャされた認証情報:", capturedAuth);
+    console.log("キャプチャされた認証情報:", capturedAuth);
 
     // Cookie情報の取得
     const cookies = await page.cookies();
     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join("; ");
     console.log("構築済みCookie文字列:", cookieString);
 
-    // キャプチャされた必須ヘッダー（Authorization, x-csrf-token, x-uid）をすべて付与してDELETE APIを実行
+    // キャプチャされた情報を用いて作成した投稿を削除するAPIを実行
     if (capturedAuth.authorization && capturedAuth.csrf && capturedAuth.uid) {
-      console.log("必要な認証情報がすべて揃ったため、DELETE APIを実行します...");
+      console.log("必要な認証情報がすべて揃ったため、作成した投稿に対してDELETE APIを実行します...");
       
-      const apiResult = await page.evaluate(async (auth, csrf, uid) => {
+      const apiResult = await page.evaluate(async (postId, auth, csrf, uid) => {
         try {
-          const res = await fetch("https://padlet.com/api/9/wishes/post_4b3zaM2NjG76Q2j7?soft_delete=true", {
+          const res = await fetch(`https://padlet.com/api/9/wishes/${postId}?soft_delete=true`, {
             method: "DELETE",
             credentials: "include",
             headers: {
@@ -138,14 +184,14 @@ const puppeteer = require("puppeteer");
         } catch (err) {
           return { error: err.message };
         }
-      }, capturedAuth.authorization, capturedAuth.csrf, capturedAuth.uid);
+      }, createdPostId, capturedAuth.authorization, capturedAuth.csrf, capturedAuth.uid);
 
-      console.log("API 実行結果:", apiResult);
+      console.log("DELETE API 実行結果:", apiResult);
     } else {
-      console.log("警告: 必要な認証情報の一部がキャプチャできませんでした。待機時間を伸ばすか、ページ内で追加のアクションが必要です。");
+      console.log("警告: 必要な認証情報の一部がキャプチャできませんでした。待機時間を調整してください。");
     }
 
-    console.log("処理が完了しました。ブラウザを終了します。");
+    console.log("すべての処理が完了しました。ブラウザを終了します。");
     await browser.close();
     process.exit(0);
   } catch (error) {
