@@ -1,10 +1,10 @@
 {
   "name": "padlet-bot",
   "version": "1.0.0",
-  "description": "Padlet Bot for GitHub Actions",
+  "description": "Padlet Bot for GitHub Actions with Profile Separation",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js bot"
   },
   "dependencies": {
     "puppeteer": "^24.0.0"
