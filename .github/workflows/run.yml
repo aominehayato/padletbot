@@ -29,7 +29,13 @@ jobs:
         continue-on-error: true
 
       - name: Botスクリプトの実行
-        run: npm start
+        run: npm run bot
+
+      - name: 不要キャッシュ削除
+        run: |
+          rm -rf profiles/bot/Default/Cache
+          rm -rf profiles/bot/Default/Code Cache
+          rm -rf profiles/bot/Default/GPUCache
 
       - name: プロファイルの保存
         uses: actions/upload-artifact@v4
@@ -37,3 +43,4 @@ jobs:
           name: padlet-profile-bot
           path: profiles/bot
           overwrite: true
+          retention-days: 7
