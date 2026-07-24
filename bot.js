@@ -21,11 +21,31 @@ const puppeteer = require("puppeteer");
 
     const email = process.env.PADLET_EMAIL;
     const password = process.env.PADLET_PASSWORD;
+    const cookiesJson = process.env.PADLET_COOKIES_JSON;
     const sessionCookie = process.env.PADLET_SESSION_COOKIE;
 
-    // 事前にログイン済みCookieが環境変数に設定されている場合の読み込み処理
-    if (sessionCookie) {
-      console.log("環境変数からセッションCookieを設定中...");
+    // 事前認証用Cookieのインポート処理
+    if (cookiesJson) {
+      console.log("環境変数 PADLET_COOKIES_JSON からCookie一括設定を実行中...");
+      try {
+        const parsedCookies = JSON.parse(cookiesJson);
+        if (Array.isArray(parsedCookies)) {
+          for (const cookie of parsedCookies) {
+            await page.setCookie({
+              name: cookie.name,
+              value: cookie.value,
+              domain: cookie.domain || ".padlet.com",
+              path: cookie.path || "/",
+              httpOnly: cookie.httpOnly !== undefined ? cookie.httpOnly : true,
+              secure: cookie.secure !== undefined ? cookie.secure : true
+            });
+          }
+        }
+      } catch (err) {
+        console.error("PADLET_COOKIES_JSON のパースに失敗しました:", err.message);
+      }
+    } else if (sessionCookie) {
+      console.log("環境変数 PADLET_SESSION_COOKIE からセッションCookieを設定中...");
       await page.setCookie({
         name: "ww_s",
         value: sessionCookie,
@@ -36,7 +56,7 @@ const puppeteer = require("puppeteer");
       });
     }
 
-    if (email && password && !sessionCookie) {
+    if (email && password && !cookiesJson && !sessionCookie) {
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
@@ -78,7 +98,6 @@ const puppeteer = require("puppeteer");
       console.log("ログインAPIレスポンスステータス:", loginResponse.status);
       console.log("ログインAPIレスポンス結果:", loginResponse.body);
 
-      // レスポンスに含まれる検証URLへの自動ナビゲーション処理
       try {
         const responseData = JSON.parse(loginResponse.body);
         if (responseData && responseData.data && responseData.data.attributes) {
@@ -95,10 +114,8 @@ const puppeteer = require("puppeteer");
       console.log("通信完了まで3秒間待機します...");
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
-      const cookies = await page.cookies();
-      console.log("ログイン後に取得されたCookie一覧:", cookies.map((c) => c.name));
-    } else if (!sessionCookie) {
-      console.log("ログイン環境変数が設定されていないため、未認証の状態で処理を継続します。");
+      const currentCookies = await page.cookies();
+      console.log("ログイン後に取得されたCookie一覧:", currentCookies.map((c) => c.name));
     }
 
     console.log("Padletの目的のボードページへアクセス中...");
@@ -106,19 +123,31 @@ const puppeteer = require("puppeteer");
       waitUntil: "networkidle2"
     });
 
+    console.log("ボードページ上の最新CSRFトークンを再取得中...");
+    const boardCsrfToken = await page.evaluate(() => {
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      return meta ? meta.content : null;
+    });
+
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
     console.log("確立された認証セッションを用いて非公開APIへリクエストを送信中...");
-    const apiResult = await page.evaluate(async (url) => {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "accept": "*/*",
-          "prefer": "safe"
-        }
-      });
-      return await response.text();
-    }, apiUrl);
+    const apiResult = await page.evaluate(
+      async (url, token) => {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            "accept": "*/*",
+            "prefer": "safe",
+            "x-csrf-token": token || ""
+          },
+          credentials: "include"
+        });
+        return await response.text();
+      },
+      apiUrl,
+      boardCsrfToken
+    );
 
     console.log("--- APIレスポンス結果 ---");
     console.log(apiResult);
