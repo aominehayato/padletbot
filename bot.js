@@ -115,7 +115,9 @@ const puppeteer = require("puppeteer");
       await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const currentCookies = await page.cookies();
-      console.log("ログイン後に取得されたCookie一覧:", currentCookies.map((c) => c.name));
+      console.log("--- ログイン後に取得されたCookie詳細 ---");
+      console.log(JSON.stringify(currentCookies, null, 2));
+      console.log("----------------------------------------");
     }
 
     console.log("Padletの目的のボードページへアクセス中...");
