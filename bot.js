@@ -73,55 +73,71 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    const cookiesJson = process.env.PADLET_COOKIES_JSON;
-    const sessionCookie = process.env.PADLET_SESSION_COOKIE;
-    const verificationUrl = process.env.PADLET_VERIFICATION_URL;
+    const email = process.env.PADLET_EMAIL;
+    const password = process.env.PADLET_PASSWORD;
 
-    // 事前認証用Cookieのインポート処理
-    if (cookiesJson) {
-      console.log("環境変数 PADLET_COOKIES_JSON からCookie一括設定を実行中...");
-      try {
-        const parsedCookies = JSON.parse(cookiesJson);
-        if (Array.isArray(parsedCookies)) {
-          for (const cookie of parsedCookies) {
-            await page.setCookie({
-              name: cookie.name,
-              value: cookie.value,
-              domain: cookie.domain || ".padlet.com",
-              path: cookie.path || "/",
-              httpOnly: cookie.httpOnly !== undefined ? cookie.httpOnly : true,
-              secure: cookie.secure !== undefined ? cookie.secure : true
-            });
+    // Padletのログインページへアクセス
+    console.log("Padletのログインページへアクセスしています...");
+    await page.goto("https://padlet.com/login", { waitUntil: "networkidle2", timeout: 60000 });
+
+    // ログイン画面のDOMテキストを確認（デバッグ用）
+    const loginPageText = await page.evaluate(() => document.body.innerText.slice(0, 300));
+    console.log("ログイン画面読み込み確認（抜粋）:", loginPageText.replace(/\s+/g, " "));
+
+    if (email && password) {
+      console.log("環境変数からメールアドレスとパスワードを使用してログイン処理を実行します...");
+      
+      // メールアドレス入力欄の待機と入力
+      await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 15000 });
+      await page.type('input[type="email"], input[name="email"]', email, { delay: 100 });
+
+      // パスワード入力欄の待機と入力
+      await page.waitForSelector('input[type="password"], input[name="password"]', { timeout: 15000 });
+      await page.type('input[type="password"], input[name="password"]', password, { delay: 100 });
+
+      // ログインボタンのクリック
+      const submitButtonSelectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'form button'
+      ];
+      
+      let clicked = false;
+      for (const selector of submitButtonSelectors) {
+        try {
+          const btn = await page.$(selector);
+          if (btn) {
+            await btn.click();
+            clicked = true;
+            console.log(`送信ボタン (${selector}) をクリックしました。`);
+            break;
           }
+        } catch (e) {
+          // セレクタが見つからない場合は次へ
         }
-      } catch (err) {
-        console.error("PADLET_COOKIES_JSON のパースに失敗しました:", err.message);
       }
-    } else if (sessionCookie) {
-      console.log("環境変数 PADLET_SESSION_COOKIE からセッションCookieを設定中...");
-      await page.setCookie({
-        name: "ww_s",
-        value: sessionCookie,
-        domain: ".padlet.com",
-        path: "/",
-        httpOnly: true,
-        secure: true
-      });
-    }
 
-    // メール認証用URLが指定されている場合の直接アクセス
-    if (verificationUrl) {
-      console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
-      await page.goto(verificationUrl, { waitUntil: "networkidle0", timeout: 120000 });
+      if (!clicked) {
+        console.log("送信ボタンがセレクタで見つからなかったため、キーボードのEnterで送信します。");
+        await page.keyboard.press("Enter");
+      }
+
+      // ログイン完了（ダッシュボード等への遷移）を待機
+      console.log("ログイン完了およびダッシュボードへの遷移を待機しています（最大60秒）...");
+      try {
+        await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
+      } catch (navErr) {
+        console.log("navigationの待機がタイムアウトしましたが、SPA遷移の可能性を考慮して続行します。");
+      }
+
       await new Promise(resolve => setTimeout(resolve, 10000));
+    } else {
+      console.log("PADLET_EMAIL または PADLET_PASSWORD が設定されていないため、ログイン処理をスキップします。");
     }
 
-    // Padletホームへアクセスし、ww_ati などのトラッキングCookieが生成されるまで待機
-    console.log("Padletホームへアクセスしてセッションおよびトラッキング（ww_ati等）を初期化中...");
-    await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
-
+    // トラッキングCookie（ww_ati等）の生成を確認
     try {
-      await page.waitForFunction(() => document.cookie.includes("ww_ati"), { timeout: 30000 });
+      await page.waitForFunction(() => document.cookie.includes("ww_ati"), { timeout: 15000 });
       console.log("ww_ati の生成を確認しました。");
     } catch (e) {
       console.log("ww_ati の生成待ちがタイムアウトしました。続行します。");
