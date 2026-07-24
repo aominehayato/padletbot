@@ -25,4 +25,6 @@ jobs:
         env:
           PADLET_EMAIL: ${{ secrets.PADLET_EMAIL }}
           PADLET_PASSWORD: ${{ secrets.PADLET_PASSWORD }}
+          PADLET_COOKIES_JSON: ${{ secrets.PADLET_COOKIES_JSON }}
+          PADLET_SESSION_COOKIE: ${{ secrets.PADLET_SESSION_COOKIE }}
         run: npm start
