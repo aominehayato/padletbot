@@ -29,6 +29,8 @@ jobs:
         continue-on-error: true
 
       - name: Botスクリプトの実行
+        env:
+          PADLET_API_KEY: ${{ secrets.PADLET_API_KEY }}
         run: npm run bot
 
       - name: 不要キャッシュ削除
