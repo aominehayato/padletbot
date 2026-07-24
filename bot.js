@@ -27,17 +27,18 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
-    // 通信の監視設定（login_as_user や verify_login の動的キャプチャ）
+    // 全てのAPI通信を監視して動的キャプチャする設定
     page.on("request", (req) => {
-      if (req.url().includes("login_as_user") || req.url().includes("verify_login")) {
-        console.log("REQUEST:", req.url());
+      const url = req.url();
+      if (url.includes("/api/")) {
+        console.log("API REQUEST:", req.method(), url);
       }
     });
 
     page.on("response", async (response) => {
       const url = response.url();
-      if (url.includes("login_as_user") || url.includes("verify_login")) {
-        console.log("RESPONSE:", response.status(), url);
+      if (url.includes("/api/")) {
+        console.log("API RESPONSE:", response.status(), url);
       }
     });
 
@@ -154,9 +155,14 @@ const puppeteer = require("puppeteer");
               timeout: 30000
             });
 
-            // リダイレクト完了まで追加で確実に待機
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            console.log("遷移後の最終URL:", page.url());
+            // verify-login-email-address からの自動遷移やJS側の処理完了を確実に待機
+            await page.waitForFunction(() => {
+              return !location.pathname.includes("verify-login-email-address");
+            }, {
+              timeout: 60000
+            }).catch(() => {});
+
+            console.log("認証後URL:", page.url());
 
             // 状態確認用のスクリーンショットを保存
             await page.screenshot({ path: "login_result.png", fullPage: true });
@@ -182,7 +188,6 @@ const puppeteer = require("puppeteer");
 
     console.log("ブラウザの通常ナビゲーション（page.goto）を用いて非公開APIへ直接アクセス中...");
     
-    // fetchを使用せず、Chrome成功通信と同じ通常ナビゲーション（GETリクエスト）を実行
     await page.goto(apiUrl, {
       waitUntil: "networkidle2"
     });
