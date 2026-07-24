@@ -43,7 +43,6 @@ const puppeteer = require("puppeteer");
       if (url.includes("/api/")) {
         console.log("API RESPONSE:", res.status(), url);
       }
-      // リダイレクトの追跡（300番台レスポンスとLocationヘッダーの監視）
       if (res.status() >= 300 && res.status() < 400) {
         const headers = res.headers();
         console.log("REDIRECT DETECTED:", res.status(), url, "->", headers["location"] || "No Location");
@@ -140,7 +139,6 @@ const puppeteer = require("puppeteer");
             })
           });
 
-          // レスポンスヘッダーのエントリを詳細に出力するため配列として取得
           const headerEntries = [...res.headers.entries()];
 
           return {
@@ -204,21 +202,32 @@ const puppeteer = require("puppeteer");
       console.log("----------------------------------------");
     }
 
+    // ログイン状態およびホームページの確認
+    console.log("Padletホームへアクセスしてログイン状態を確認中...");
+    await page.goto("https://padlet.com/", { waitUntil: "networkidle2" });
+    console.log("ホーム画面タイトル:", await page.evaluate(() => document.title));
+    console.log("ホーム画面URL:", await page.evaluate(() => location.href));
+
+    // 実際のボードページへ一度遷移してリファラーやセッション文脈を完全に一致させる
+    const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
+    console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
+    await page.goto(boardUrl, { waitUntil: "networkidle2" });
+
     const allCookies = await page.cookies();
     console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
-    console.log("fetch を用いて非公開APIへ直接アクセス中...");
+    console.log("ボードページを経由したコンテキストで非公開APIへアクセス中...");
     
-    // page.goto ではなく fetch を用いてChrome通信を完全再現
     const apiResult = await page.evaluate(async (targetApiUrl) => {
       const res = await fetch(targetApiUrl, {
         method: "GET",
         credentials: "include",
         headers: {
-          "accept": "application/json, application/vnd.api+json",
+          "accept": "*/*",
+          "prefer": "safe",
           "x-requested-with": "XMLHttpRequest"
         }
       });
