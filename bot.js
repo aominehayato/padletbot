@@ -54,53 +54,52 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // 認証に必要なヘッダー情報を保持する変数
+    // 全通信から認証情報を動的に捕捉するための変数
     let capturedAuth = null;
     let capturedCsrf = null;
     let capturedUid = null;
 
-    // Padlet自体のAPIリクエストを監視し、認証に必要なヘッダーを動的にキャプチャする
+    // 流れてくるすべてのリクエストを監視して認証ヘッダーを網羅的に探す
     page.on("request", (req) => {
       const url = req.url();
-      if (url.includes("/api/")) {
-        const headers = req.headers();
-        const auth = headers["authorization"];
-        const csrf = headers["x-csrf-token"];
-        const uid = headers["x-uid"];
+      const headers = req.headers();
+      const auth = headers["authorization"];
+      const csrf = headers["x-csrf-token"];
+      const uid = headers["x-uid"];
 
-        if (auth && !capturedAuth) {
+      if (auth || csrf || uid) {
+        console.log(`\n===== 認証関連ヘッダー検出 [${req.method()}] ${url} =====`);
+        if (auth) {
           capturedAuth = auth;
-          console.log("===== 認証 Bearer トークンをキャプチャしました =====");
+          console.log("authorization 発見:", auth.slice(0, 30) + "...");
         }
-        if (csrf && !capturedCsrf) {
+        if (csrf) {
           capturedCsrf = csrf;
-          console.log("===== x-csrf-token をキャプチャしました =====");
+          console.log("x-csrf-token 発見:", csrf.slice(0, 30) + "...");
         }
-        if (uid && !capturedUid) {
+        if (uid) {
           capturedUid = uid;
-          console.log("===== x-uid をキャプチャしました =====");
+          console.log("x-uid 発見:", uid);
         }
       }
     });
 
+    // レスポンスヘッダー側もすべて監視する
     page.on("response", async (res) => {
       const url = res.url();
-      if (url.includes("/api/10/wishes")) {
-        console.log("===== PADLET自身による WISHES API レスポンス検出 =====");
-        console.log("ステータス:", res.status());
-        try {
-          const body = await res.text();
-          console.log("取得したAPIレスポンスボディ抜粋:", body.slice(0, 500));
-        } catch (e) {
-          console.log("レスポンスボディ取得失敗:", e.message);
+      const headers = res.headers();
+      if (headers["set-cookie"] || headers["x-csrf-token"]) {
+        console.log(`\n===== レスポンス認証ヘッダー検出: ${url} =====`);
+        if (headers["x-csrf-token"]) {
+          console.log("レスポンス内 x-csrf-token:", headers["x-csrf-token"]);
         }
       }
     });
 
-    // 実際のボードページへ直接遷移してセッションコンテキストを構築
+    // 実際のボードページへ遷移
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle2" });
+    await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
 
     // ログイン状態の確認処理
     const loggedIn = await page.evaluate(() => {
@@ -108,11 +107,11 @@ const puppeteer = require("puppeteer");
     });
     console.log("ログイン状態:", loggedIn);
 
-    // document.cookie の出力を追加して、Puppeteerのcookies()との差異を調査
+    // document.cookie の出力
     const docCookie = await page.evaluate(() => document.cookie);
     console.log("document.cookie の内容:", docCookie);
 
-    // LocalStorage の内容を確認してトークン等の有無を調査
+    // LocalStorage の内容確認
     const localStorages = await page.evaluate(() => {
       const items = [];
       for (let i = 0; i < localStorage.length; i++) {
@@ -123,12 +122,12 @@ const puppeteer = require("puppeteer");
     });
     console.log("LocalStorage一覧:", localStorages);
 
-    // ページの初期化とAPI自動発行を十分に待機（トークンがリクエストに乗るのを待つ）
-    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
-    for (let i = 0; i < 15; i++) {
+    // SPA全体の初期化と認証トークン発行通信を確実に行わせるため30秒間待機
+    console.log("Padlet内部の初期化処理と認証通信の発生を30秒間待ち受けます...");
+    for (let i = 0; i < 30; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       if (capturedAuth && capturedCsrf && capturedUid) {
-        console.log("必要な認証ヘッダーがすべて揃いました。");
+        console.log("すべての必要ヘッダーが揃いました。");
         break;
       }
     }
@@ -169,17 +168,11 @@ const puppeteer = require("puppeteer");
     console.log("WISHES API status:", apiResult.status);
     console.log("レスポンス抜粋:", apiResult.text.slice(0, 500));
 
-    // スクロール操作を行って追加のAPIフェッチを強制発火させる
-    console.log("ページ内スクロールを実行してAPIリクエストの発生を促します...");
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight / 2);
-    });
-    await new Promise(resolve => setTimeout(resolve, 10000));
-
+    // ページ内スクロールを行って追加のトリガーを発生させる
+    console.log("ページ内スクロールを実行します...");
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight);
     });
-    console.log("追加のAPIレスポンスを待機しています（10秒）...");
     await new Promise(resolve => setTimeout(resolve, 10000));
 
     const finalCookies = await page.cookies();
