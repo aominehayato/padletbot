@@ -21,10 +21,19 @@ jobs:
       - name: 依存関係のインストール
         run: npm install
 
+      - name: 前回プロファイルの復元
+        uses: actions/download-artifact@v4
+        with:
+          name: padlet-profile-bot
+          path: profiles/bot
+        continue-on-error: true
+
       - name: Botスクリプトの実行
-        env:
-          PADLET_EMAIL: ${{ secrets.PADLET_EMAIL }}
-          PADLET_PASSWORD: ${{ secrets.PADLET_PASSWORD }}
-          PADLET_COOKIES_JSON: ${{ secrets.PADLET_COOKIES_JSON }}
-          PADLET_SESSION_COOKIE: ${{ secrets.PADLET_SESSION_COOKIE }}
         run: npm start
+
+      - name: プロファイルの保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: padlet-profile-bot
+          path: profiles/bot
+          overwrite: true
