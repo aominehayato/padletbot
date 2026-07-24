@@ -93,10 +93,10 @@ const puppeteer = require("puppeteer");
       }
     });
 
-    // すべての Fetch / XHR レスポンスを包括的に監視・ログ出力する設定
+    // すべての Fetch / XHR レスポンスを包括的に監視・ログ出力する設定（修正済み）
     page.on("response", async (res) => {
       const req = res.request();
-      const type = res.resourceType();
+      const type = req.resourceType();
 
       if (type === "xhr" || type === "fetch") {
         console.log("\n===== FETCH / XHR RESPONSE =====");
