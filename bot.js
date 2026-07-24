@@ -52,13 +52,32 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // Padlet自体のAPIリクエストおよびレスポンスを完全に監視・捕捉する設定
+    // 認証に必要なヘッダー情報を保持する変数
+    let capturedAuth = null;
+    let capturedCsrf = null;
+    let capturedUid = null;
+
+    // Padlet自体のAPIリクエストを監視し、認証に必要なヘッダーを動的にキャプチャする
     page.on("request", (req) => {
       const url = req.url();
-      if (url.includes("/api/10/")) {
-        console.log("===== API リクエスト検出 =====");
-        console.log("リクエストURL:", url);
-        console.log("リクエストヘッダー:", req.headers());
+      if (url.includes("/api/10/") || url.includes("/api/9/")) {
+        const headers = req.headers();
+        const auth = headers["authorization"];
+        const csrf = headers["x-csrf-token"];
+        const uid = headers["x-uid"];
+
+        if (auth && !capturedAuth) {
+          capturedAuth = auth;
+          console.log("===== 認証 Bearer トークンをキャプチャしました =====");
+        }
+        if (csrf && !capturedCsrf) {
+          capturedCsrf = csrf;
+          console.log("===== x-csrf-token をキャプチャしました =====");
+        }
+        if (uid && !capturedUid) {
+          capturedUid = uid;
+          console.log("===== x-uid をキャプチャしました =====");
+        }
       }
     });
 
@@ -87,22 +106,46 @@ const puppeteer = require("puppeteer");
     });
     console.log("ログイン状態:", loggedIn);
 
-    // ページの初期化とAPI自動発行を十分に待機
-    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（10秒）...");
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // localStorage の内容を確認してトークン等の有無を調査
+    const localStorages = await page.evaluate(() => {
+      const items = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        items.push({ key: key, value: localStorage.getItem(key)?.slice(0, 100) });
+      }
+      return items;
+    });
+    console.log("LocalStorage一覧:", localStorages);
 
-    // Padlet API 初回 wishes取得の実行（不要なsec-*ヘッダーを排除し、自然なfetchを実行）
-    console.log("WISHES API 初回取得を実行します...");
-    const apiResult = await page.evaluate(async () => {
+    // ページの初期化とAPI自動発行を十分に待機（トークンがリクエストに乗るのを待つ）
+    console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
+    for (let i = 0; i < 15; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (capturedAuth && capturedCsrf && capturedUid) {
+        console.log("必要な認証ヘッダーがすべて揃いました。");
+        break;
+      }
+    }
+
+    console.log("キャプチャ状況 -> authorization:", !!capturedAuth, "x-csrf-token:", !!capturedCsrf, "x-uid:", !!capturedUid);
+
+    // キャプチャしたヘッダーを使って WISHES API を明示的に実行
+    console.log("WISHES API の認証付きカスタム取得を実行します...");
+    const apiResult = await page.evaluate(async (auth, csrf, uid) => {
       const url = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=" + Date.now();
       try {
+        const headers = {
+          "accept": "application/json, application/vnd.api+json",
+          "prefer": "safe"
+        };
+        if (auth) headers["authorization"] = auth;
+        if (csrf) headers["x-csrf-token"] = csrf;
+        if (uid) headers["x-uid"] = uid;
+
         const response = await fetch(url, {
           method: "GET",
           credentials: "include",
-          headers: {
-            "accept": "application/json, application/vnd.api+json",
-            "prefer": "safe"
-          }
+          headers: headers
         });
         const text = await response.text();
         return {
@@ -115,12 +158,12 @@ const puppeteer = require("puppeteer");
           text: err.toString()
         };
       }
-    });
+    }, capturedAuth, capturedCsrf, capturedUid);
 
     console.log("WISHES API status:", apiResult.status);
     console.log("レスポンス抜粋:", apiResult.text.slice(0, 500));
 
-    // スクロール操作を行ってPadletのAPIフェッチ（無限スクロール等）を強制発火させる
+    // スクロール操作を行って追加のAPIフェッチを強制発火させる
     console.log("ページ内スクロールを実行してAPIリクエストの発生を促します...");
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight / 2);
@@ -130,8 +173,8 @@ const puppeteer = require("puppeteer");
     await page.evaluate(() => {
       window.scrollTo(0, document.body.scrollHeight);
     });
-    console.log("追加のAPIレスポンスを待機しています（15秒）...");
-    await new Promise(resolve => setTimeout(resolve, 15000));
+    console.log("追加のAPIレスポンスを待機しています（10秒）...");
+    await new Promise(resolve => setTimeout(resolve, 10000));
 
     const finalCookies = await page.cookies();
     console.log("最終的な全Cookie名一覧:", finalCookies.map(c => c.name));
