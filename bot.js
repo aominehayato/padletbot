@@ -1,14 +1,13 @@
 const puppeteer = require("puppeteer");
-const path = require("path");
 
 (async () => {
   let browser = null;
   try {
     console.log("ブラウザを起動しています...");
-    // ログインセッションを永続化するために userDataDir を指定
+    // userDataDirを指定することで、一度手動ログイン（または認証）したセッションを保持・再利用します
     browser = await puppeteer.launch({
-      headless: false,
-      userDataDir: path.join(__dirname, "padlet-profile"),
+      headless: false, // 初回ログインやデバッグのためにfalseに設定しています（必要に応じてtrueに変更してください）
+      userDataDir: "./padlet-profile",
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -54,9 +53,7 @@ const path = require("path");
 
     const cookiesJson = process.env.PADLET_COOKIES_JSON;
     const sessionCookie = process.env.PADLET_SESSION_COOKIE;
-    
-    // ご自身の環境に合わせて、取得したverification_token付きURLをここに直接設定してください
-    const verificationUrl = process.env.PADLET_VERIFICATION_URL || "";
+    const verificationUrl = process.env.PADLET_VERIFICATION_URL; // 例: https://padlet.com/auth/verify_login?verification_token=...
 
     // 事前認証用Cookieのインポート処理
     if (cookiesJson) {
@@ -90,15 +87,12 @@ const path = require("path");
       });
     }
 
-    // verificationUrl が指定されている場合は直接認証URLへアクセスしてセッションを確立する
+    // メール認証用URLが指定されている場合は直接アクセスしてセッションを完全に確立する
     if (verificationUrl) {
       console.log("メール認証用URLへ直接アクセスしてセッションを確立します:", verificationUrl);
       await page.goto(verificationUrl, { waitUntil: "networkidle0", timeout: 120000 });
       await new Promise(resolve => setTimeout(resolve, 5000));
       console.log("認証完了後のURL:", page.url());
-      
-      console.log("認証後に取得されたCookie詳細:");
-      console.log(JSON.stringify(await page.cookies(), null, 2));
     }
 
     // Padletホームへアクセスしてログイン状態を確認中
@@ -107,10 +101,10 @@ const path = require("path");
     console.log("ホーム画面タイトル:", await page.evaluate(() => document.title));
     console.log("ホーム画面URL:", await page.evaluate(() => location.href));
 
-    // ユーザー情報取得API（/api/5/users/me）でログインが完全に成功しているか検証
-    console.log("ログイン確認API (/api/5/users/me) を実行中...");
+    // 実際にログイン済みかどうかをAPI（/api/5/users/me）で検証する
+    console.log("/api/5/users/me を用いてログイン状態を検証中...");
     const meResult = await page.evaluate(async () => {
-      const r = await fetch("/api/5/users/me", {
+      const res = await fetch("/api/5/users/me", {
         method: "GET",
         credentials: "include",
         headers: {
@@ -118,28 +112,24 @@ const path = require("path");
         }
       });
       return {
-        status: r.status,
-        text: await r.text()
+        status: res.status,
+        text: await res.text()
       };
     });
-    console.log("ユーザー確認APIステータス:", meResult.status);
-    console.log("ユーザー確認APIレスポンス:", meResult.text);
+    console.log("ユーザー検証APIステータス:", meResult.status);
+    console.log("ユーザー検証APIレスポンス:", meResult.text);
 
     // 実際のボードページへ一度遷移してリファラーやセッション文脈を完全に一致させる
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ移動してコンテキストを構築中:", boardUrl);
-    await page.goto(boardUrl, { waitUntil: "networkidle0" });
+    await page.goto(boardUrl, { waitUntil: "networkidle2" });
 
-    // ページを一度リロードしてSPAの状態を同期
+    // 念のためページをリロードしてSPA上の状態を確実に同期する
     await page.reload({ waitUntil: "networkidle0" });
 
     const allCookies = await page.cookies();
     console.log("API直前の全Cookie一覧:", allCookies.map(c => `${c.name}=${c.value}`).join("; "));
     console.log("API直前のlocation.href:", await page.evaluate(() => location.href));
-    console.log("API直前のデバッグ情報:", JSON.stringify(await page.evaluate(() => ({
-      localStorageKeys: Object.keys(localStorage),
-      url: location.href
-    })), null, 2));
 
     const apiUrl = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=1784862836";
 
@@ -152,7 +142,8 @@ const path = require("path");
         headers: {
           "accept": "*/*",
           "prefer": "safe",
-          "cache-control": "no-cache"
+          "cache-control": "no-cache",
+          "pragma": "no-cache"
         }
       });
       return {
