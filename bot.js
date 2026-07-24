@@ -19,6 +19,13 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
     );
 
+    // login_as_user のレスポンスステータスを監視
+    page.on("response", async (response) => {
+      if (response.url().includes("login_as_user")) {
+        console.log("login_as_user status:", response.status(), response.url());
+      }
+    });
+
     const email = process.env.PADLET_EMAIL;
     const password = process.env.PADLET_PASSWORD;
     const cookiesJson = process.env.PADLET_COOKIES_JSON;
@@ -68,6 +75,24 @@ const puppeteer = require("puppeteer");
 
       console.log("取得したCSRFトークン:", csrfToken);
 
+      console.log("事前チェックAPI（check-if-can-login）を実行中...");
+      await page.evaluate(async (userEmail) => {
+        await fetch(`/api/5/auth/check-if-can-login?email_or_username=${encodeURIComponent(userEmail)}`, {
+          method: "GET",
+          headers: { "accept": "*/*", "prefer": "safe" },
+          credentials: "include"
+        });
+      }, email);
+
+      console.log("ログインマニフェスト取得APIを実行中...");
+      await page.evaluate(async (userEmail) => {
+        await fetch(`/api/auth/login?email_or_username=${encodeURIComponent(userEmail)}`, {
+          method: "GET",
+          headers: { "accept": "application/json, application/vnd.api+json", "prefer": "safe" },
+          credentials: "include"
+        });
+      }, email);
+
       console.log("認証API経由でログイン処理を実行中...");
       const loginResponse = await page.evaluate(
         async (userEmail, userPassword, token) => {
@@ -104,15 +129,20 @@ const puppeteer = require("puppeteer");
           const targetUrl = responseData.data.attributes.loginUrl || responseData.data.attributes.redirectUrl;
           if (targetUrl) {
             console.log("レスポンスから取得した検証URLへアクセス中:", targetUrl);
-            await page.goto(targetUrl, { waitUntil: "networkidle2" });
+            await page.goto(targetUrl, {
+              waitUntil: "networkidle2",
+              timeout: 30000
+            });
+
+            console.log("login_as_user後のURL:", page.url());
+            console.log("セッション確立のため10秒間待機します...");
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+            console.log("待機完了後の現在のURL:", page.url());
           }
         }
       } catch (e) {
-        console.log("レスポンスJSONの自動解析をスキップしました。");
+        console.log("レスポンスJSONの自動解析または検証URLアクセスに失敗しました:", e.message);
       }
-
-      console.log("通信完了まで3秒間待機します...");
-      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       const currentCookies = await page.cookies();
       console.log("--- ログイン後に取得されたCookie詳細 ---");
