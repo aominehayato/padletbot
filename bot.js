@@ -90,6 +90,36 @@ const puppeteer = require("puppeteer");
       }
     });
 
+    // requestfinished イベントの追加
+    page.on("requestfinished", async (req) => {
+      const type = req.resourceType();
+      if (type === "xhr" || type === "fetch") {
+        const response = await req.response();
+        if (response) {
+          console.log("\n===== REQUEST FINISHED =====");
+          console.log("URL:", req.url(), "Status:", response.status());
+          try {
+            const body = await response.text();
+            console.log("Body snippet:", body.substring(0, 500));
+          } catch (e) {
+            console.log("Body read failed:", e.message);
+          }
+        }
+      }
+    });
+
+    // WebSocketの監視追加
+    page.on("websocket", (ws) => {
+      console.log("\n===== WEBSOCKET CREATED =====");
+      console.log("URL:", ws.url());
+
+      ws.on("framereceived", (frame) => {
+        if (frame.payloadData) {
+          console.log("WS DATA RECEIVED:", frame.payloadData.substring(0, 300));
+        }
+      });
+    });
+
     // 実際のボードページへ直接遷移してセッションコンテキストを構築
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
@@ -115,6 +145,25 @@ const puppeteer = require("puppeteer");
       return items;
     });
     console.log("LocalStorage一覧:", localStorages);
+
+    // Performance API を使ったリソース確認
+    const resources = await page.evaluate(() => {
+      return performance.getEntriesByType("resource")
+        .map(x => x.name)
+        .filter(x => x.includes("/api") || x.includes("/v1") || x.includes("padlet"));
+    });
+    console.log("Performance API Resources:", resources);
+
+    // HTML内の Initial State / 投稿データの探索
+    const htmlInfo = await page.evaluate(() => {
+      const html = document.documentElement.innerHTML;
+      return {
+        hasInitial: html.includes("__INITIAL") || html.includes("__STATE__") || html.includes("initialState"),
+        hasWallId: html.includes("wallId") || html.includes("266991839"),
+        hasPosts: html.includes("posts") || html.includes("content")
+      };
+    });
+    console.log("HTML内容の初期状態チェック:", htmlInfo);
 
     // ページの初期化とAPI自動発行を十分に待機（30秒）
     console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（30秒）...");
