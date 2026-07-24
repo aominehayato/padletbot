@@ -98,6 +98,12 @@ const puppeteer = require("puppeteer");
     console.log("ボードページへ移動してSPAおよびセッションコンテキストを構築中:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "networkidle2" });
 
+    // ログイン状態の確認処理
+    const loggedIn = await page.evaluate(() => {
+      return !location.pathname.includes("/login");
+    });
+    console.log("ログイン状態:", loggedIn);
+
     // ページの初期化とAPI自動発行を十分に待機
     console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
     await new Promise(resolve => setTimeout(resolve, 15000));
