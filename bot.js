@@ -26,12 +26,26 @@ const puppeteer = require("puppeteer");
       console.log("Padletログインページへアクセス中...");
       await page.goto("https://padlet.com/auth/login", { waitUntil: "networkidle2" });
 
-      console.log("ログイン情報を入力中...");
+      console.log("メールアドレス入力欄の表示を待機中...");
+      await page.waitForSelector("input[type='email']", { timeout: 15000 });
       await page.type("input[type='email']", email);
-      await page.type("input[type='password']", password);
 
+      // パスワード入力欄が存在するか確認して入力
+      const passwordInput = await page.$("input[type='password']");
+      if (passwordInput) {
+        console.log("パスワードを入力中...");
+        await page.type("input[type='password']", password);
+      } else {
+        // 2段階画面（メール入力後に次へを押すタイプ）の場合の対応
+        console.log("「次へ」操作を実行中...");
+        await page.keyboard.press("Enter");
+        await page.waitForSelector("input[type='password']", { timeout: 15000 });
+        await page.type("input[type='password']", password);
+      }
+
+      console.log("ログインフォームを送信中...");
       await Promise.all([
-        page.click("button[type='submit']"),
+        page.keyboard.press("Enter"),
         page.waitForNavigation({ waitUntil: "networkidle2" })
       ]);
       console.log("ログイン処理が完了しました。");
