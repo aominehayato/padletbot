@@ -4,9 +4,9 @@ const puppeteer = require("puppeteer");
   let browser = null;
   try {
     console.log("ブラウザを起動しています...");
-    // userDataDirを指定することで、一度手動ログイン（または認証）したセッションを保持・再利用します
+    // GitHub Actionsなどの環境で実行するため headless: true に設定しています
     browser = await puppeteer.launch({
-      headless: false, // 初回ログインやデバッグのためにfalseに設定しています（必要に応じてtrueに変更してください）
+      headless: true,
       userDataDir: "./padlet-profile",
       args: [
         "--no-sandbox",
@@ -29,11 +29,16 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7871.129 Safari/537.36"
     );
 
-    // 全てのAPI通信およびナビゲーションリクエスト・リダイレクトの追跡・監視設定
+    // 全てのAPI通信および対象APIの詳細ヘッダーを追跡・監視設定
     page.on("request", (req) => {
       const url = req.url();
       if (url.includes("/api/")) {
         console.log("API REQUEST:", req.method(), url);
+      }
+      if (url.includes("/api/10/wishes")) {
+        console.log("===== TARGET WISHES API REQUEST HEADERS =====");
+        console.log(req.headers());
+        console.log("POST DATA:", req.postData());
       }
       if (req.isNavigationRequest()) {
         console.log("NAV REQUEST:", req.url());
@@ -101,6 +106,17 @@ const puppeteer = require("puppeteer");
     console.log("ホーム画面タイトル:", await page.evaluate(() => document.title));
     console.log("ホーム画面URL:", await page.evaluate(() => location.href));
 
+    // Service Workerの登録状況を確認
+    const swRegistrations = await page.evaluate(async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        return regs.map(r => r.scope);
+      } catch (e) {
+        return e.message;
+      }
+    });
+    console.log("Service Worker スコープ一覧:", swRegistrations);
+
     // 実際にログイン済みかどうかをAPI（/api/5/users/me）で検証する
     console.log("/api/5/users/me を用いてログイン状態を検証中...");
     const meResult = await page.evaluate(async () => {
@@ -135,6 +151,7 @@ const puppeteer = require("puppeteer");
 
     console.log("ボードページを経由したコンテキストで非公開APIへアクセス中...");
     
+    // ブラウザのネイティブなfetchを用いてAPIへアクセス
     const apiResult = await page.evaluate(async (targetApiUrl) => {
       const res = await fetch(targetApiUrl, {
         method: "GET",
