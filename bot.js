@@ -19,10 +19,16 @@ const puppeteer = require("puppeteer");
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
     );
 
-    // login_as_user のレスポンスステータスを監視
+    // 通信の監視設定
+    page.on("request", (req) => {
+      if (req.url().includes("login_as_user") || req.url().includes("verify_login")) {
+        console.log("REQUEST:", req.url());
+      }
+    });
+
     page.on("response", async (response) => {
-      if (response.url().includes("login_as_user")) {
-        console.log("login_as_user status:", response.status(), response.url());
+      if (response.url().includes("login_as_user") || response.url().includes("verify_login")) {
+        console.log("RESPONSE:", response.status(), response.url());
       }
     });
 
@@ -134,9 +140,22 @@ const puppeteer = require("puppeteer");
               timeout: 30000
             });
 
-            console.log("login_as_user後のURL:", page.url());
-            console.log("セッション確立のため10秒間待機します...");
-            await new Promise((resolve) => setTimeout(resolve, 10000));
+            console.log("遷移後のURL:", page.url());
+
+            // 状態確認用のスクリーンショットを保存
+            await page.screenshot({ path: "login_result.png", fullPage: true });
+            console.log("スクリーンショット 'login_result.png' を保存しました。");
+
+            // 認証完了まで待機
+            await page.waitForFunction(
+              () =>
+                location.pathname.includes("verify_login") ||
+                location.pathname.includes("home") ||
+                location.pathname.includes("dashboard") ||
+                location.pathname.includes("verify-login-email-address"),
+              { timeout: 15000 }
+            ).catch(() => {});
+
             console.log("待機完了後の現在のURL:", page.url());
           }
         }
