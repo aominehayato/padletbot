@@ -54,26 +54,67 @@ const puppeteer = require("puppeteer");
       "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7"
     });
 
-    // ネットワークリクエストおよびレスポンスの監視
-    page.on("request", (req) => {
-      const url = req.url();
-      if (url.includes("padlet.com/api") || url.includes("graphql")) {
-        console.log("[REQUEST]:", req.method(), url);
-      }
-    });
+    // ページ内 fetch / XHR を強力にフックして認証情報（Authorization, x-csrf-token, x-uid）を自動キャプチャする
+    await page.evaluateOnNewDocument(() => {
+      window.__padletAuth = {
+        authorization: null,
+        csrf: null,
+        uid: null
+      };
 
-    page.on("response", async (res) => {
-      const url = res.url();
-      if (url.includes("padlet.com/api") || url.includes("graphql")) {
-        console.log("[RESPONSE]:", res.status(), url);
-      }
+      const parseHeaders = (headers) => {
+        if (!headers) return;
+        if (headers instanceof Headers) {
+          const auth = headers.get('authorization');
+          const csrf = headers.get('x-csrf-token');
+          const uid = headers.get('x-uid');
+          if (auth) window.__padletAuth.authorization = auth;
+          if (csrf) window.__padletAuth.csrf = csrf;
+          if (uid) window.__padletAuth.uid = uid;
+        } else if (typeof headers === 'object') {
+          for (const key in headers) {
+            const lk = key.toLowerCase();
+            const val = headers[key];
+            if (lk === 'authorization') window.__padletAuth.authorization = val;
+            if (lk === 'x-csrf-token') window.__padletAuth.csrf = val;
+            if (lk === 'x-uid') window.__padletAuth.uid = val;
+          }
+        }
+      };
+
+      // fetch のフック
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        if (args[1] && args[1].headers) {
+          parseHeaders(args[1].headers);
+        }
+        const res = await originalFetch(...args);
+        return res;
+      };
+
+      // XHR のフック
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+      
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this._requestHeaders = {};
+        return originalOpen.apply(this, arguments);
+      };
+
+      XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
+        if (this._requestHeaders) {
+          this._requestHeaders[header] = value;
+          parseHeaders(this._requestHeaders);
+        }
+        return originalSetRequestHeader.apply(this, arguments);
+      };
     });
 
     const boardUrl = "https://padlet.com/magnificentconferenceliteracy/padlet-wy32bauth9n4npi1";
     console.log("ボードページへ直接移動します:", boardUrl);
     await page.goto(boardUrl, { waitUntil: "domcontentloaded" });
 
-    console.log("SPAの初期化とデータ展開を待機しています（15秒）...");
+    console.log("SPAの初期化とAPI通信の発生を待機しています（15秒）...");
     await new Promise(resolve => setTimeout(resolve, 15000));
 
     // ログイン状態の確認
@@ -82,49 +123,50 @@ const puppeteer = require("puppeteer");
     });
     console.log("ログイン状態:", loggedIn);
 
+    // キャプチャされた認証情報の取得
+    const capturedAuth = await page.evaluate(() => window.__padletAuth);
+    console.log("キャプチャされた認証情報:", capturedAuth);
+
     // Cookie情報の取得
     const cookies = await page.cookies();
     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join("; ");
     console.log("構築済みCookie文字列:", cookieString);
 
-    // ページ内のグローバルステータスや初期データ（windowオブジェクト等）の探索
-    const globalStateKeys = await page.evaluate(() => {
-      const keys = Object.keys(window).filter(key => 
-        key.toLowerCase().includes("state") || 
-        key.toLowerCase().includes("initial") || 
-        key.toLowerCase().includes("padlet") ||
-        key.toLowerCase().includes("__")
-      );
-      return keys;
-    });
-    console.log("検出された関連グローバルキー:", globalStateKeys);
+    // キャプチャされた必須ヘッダー（Authorization, x-csrf-token, x-uid）をすべて付与してDELETE APIを実行
+    if (capturedAuth.authorization && capturedAuth.csrf && capturedAuth.uid) {
+      console.log("必要な認証情報がすべて揃ったため、DELETE APIを実行します...");
+      
+      const apiResult = await page.evaluate(async (auth, csrf, uid) => {
+        try {
+          const res = await fetch("https://padlet.com/api/9/wishes/post_4b3zaM2NjG76Q2j7?soft_delete=true", {
+            method: "DELETE",
+            credentials: "include",
+            headers: {
+              "accept": "application/json, application/vnd.api+json",
+              "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
+              "authorization": auth,
+              "cache-control": "no-cache",
+              "content-type": "application/json; charset=utf-8",
+              "pragma": "no-cache",
+              "prefer": "safe",
+              "x-csrf-token": csrf,
+              "x-uid": uid
+            }
+          });
+          return {
+            status: res.status,
+            ok: res.ok,
+            text: await res.text()
+          };
+        } catch (err) {
+          return { error: err.message };
+        }
+      }, capturedAuth.authorization, capturedAuth.csrf, capturedAuth.uid);
 
-    // Cookieセッションおよびページ内コンテキストを利用して削除API等の非公開APIへアクセスを試行
-    console.log("Cookie認証を利用して対象リソースの操作を試行します...");
-    const apiResult = await page.evaluate(async () => {
-      try {
-        const res = await fetch("https://padlet.com/api/9/wishes/post_4b3zaM2NjG76Q2j7?soft_delete=true", {
-          method: "DELETE",
-          credentials: "include",
-          headers: {
-            "accept": "application/json, application/vnd.api+json",
-            "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
-            "cache-control": "no-cache",
-            "content-type": "application/json; charset=utf-8",
-            "pragma": "no-cache"
-          }
-        });
-        return {
-          status: res.status,
-          ok: res.ok,
-          text: await res.text()
-        };
-      } catch (err) {
-        return { error: err.message };
-      }
-    });
-
-    console.log("API 実行結果:", apiResult);
+      console.log("API 実行結果:", apiResult);
+    } else {
+      console.log("警告: 必要な認証情報の一部がキャプチャできませんでした。待機時間を伸ばすか、追加のアクションが必要です。");
+    }
 
     console.log("処理が完了しました。ブラウザを終了します。");
     await browser.close();
