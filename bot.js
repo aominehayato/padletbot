@@ -108,6 +108,45 @@ const puppeteer = require("puppeteer");
     console.log("Padlet内部の初期化処理とAPI自動発行を待機しています（15秒）...");
     await new Promise(resolve => setTimeout(resolve, 15000));
 
+    // Padlet API 初回 wishes取得の実行
+    console.log("WISHES API 初回取得を実行します...");
+    const apiResult = await page.evaluate(async () => {
+      const url = "https://padlet.com/api/10/wishes?wall_hashid=board_Y0KryDdQrj0GyPBb&page_start=&v=" + Date.now();
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          credentials: "include",
+          headers: {
+            "accept": "application/json, application/vnd.api+json",
+            "accept-language": "ja,en;q=0.9,en-GB;q=0.8,en-US;q=0.7",
+            "cache-control": "no-cache",
+            "pragma": "no-cache",
+            "prefer": "safe",
+            "priority": "u=1, i",
+            "sec-ch-ua": "\"Not;A=Brand\";v=\"8\", \"Chromium\";v=\"150\", \"Microsoft Edge\";v=\"150\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin"
+          }
+        });
+        const text = await response.text();
+        return {
+          status: response.status,
+          text: text
+        };
+      } catch (err) {
+        return {
+          status: 500,
+          text: err.toString()
+        };
+      }
+    });
+
+    console.log("WISHES API status:", apiResult.status);
+    console.log("レスポンス抜粋:", apiResult.text.slice(0, 500));
+
     // スクロール操作を行ってPadletのAPIフェッチ（無限スクロール等）を強制発火させる
     console.log("ページ内スクロールを実行してAPIリクエストの発生を促します...");
     await page.evaluate(() => {
